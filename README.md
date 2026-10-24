@@ -31,7 +31,7 @@ Web system for reserving seats at university events. Students and staff browse e
 2. Create the database and tables. In PowerShell, from the project folder:
 
 ```
-np
+mysql -u root -p -e "source database/schema.sql"
 ```
 
 3. Backend settings. Copy the example file and edit the values (use `root` and your MySQL password for `DB_USER` and `DB_PASSWORD`, and paste a long random string as `JWT_SECRET`):
