@@ -18,6 +18,8 @@ export const config = {
     user: required('DB_USER', 'root'),
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'campusseat_db',
+    // Hosted MySQL (Aiven, TiDB, ...) usually requires an encrypted connection: set DB_SSL=true.
+    ...(process.env.DB_SSL === 'true' ? { ssl: { rejectUnauthorized: false } } : {}),
   },
 };
 
