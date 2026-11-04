@@ -109,20 +109,8 @@ For development with live reload, run `npm run dev` in `frontend` and open [http
 
 `npm run seed` adds the schools, sample events, an admin account (`admin@campusseat.local`) and a demo student (`student@campusseat.local`). Their passwords come from `SEED_ADMIN_PASSWORD` and `SEED_DEMO_PASSWORD` in `backend/.env`, so set your own before seeding. The seed skips accounts that already exist, so it is safe to run more than once.
 
-## Deploying (Render + Aiven)
-
-1. **Database.** Create a MySQL service on Aiven and copy its host, port, user, password and database name.
-2. **Seed it once from your computer.** Put the Aiven values in `backend/.env` with `DB_SSL=true`, then run:
-
-```
-cd backend
-npm install
-npm run seed
-```
-
-   Check [`/api/schools`](https://campusseat.onrender.com/api/schools) afterwards. It should list six schools. If the School dropdown on the register page is empty, the seed has not been run against this database.
-3. **Web service.** Create a Render web service from this repo. It needs a build step that installs and builds the frontend and installs the backend, and a start command of `npm start` inside `backend`.
-4. **Environment variables on Render.** Render does not read your local `.env`. Add `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSL=true`, `JWT_SECRET` (32 characters or more) and `NODE_ENV=production`.
+## Deployment
+Hosted on Render with an Aiven MySQL database. Set the `DB_*`, `DB_SSL=true`, `JWT_SECRET` and `NODE_ENV=production` variables on Render, and run `npm run seed` once against the database.
 
 ## Tests
 
@@ -177,8 +165,3 @@ Screens 1 to 9 are in [`docs/mockups/`](docs/mockups/): [screen-1](docs/mockups/
 | Uthman Salyani | Backend |
 | Rick Kyalo | Documentation, diagrams and mockups |
 
-## Notes
-
-- Never commit `backend/.env`. It holds your database password and JWT secret.
-- Forgot password confirms the account with email and student/staff number. A production system would email a reset link instead.
-- Registration always creates a normal user account. Admin accounts are created by the seed script or promoted by an existing admin, never through the sign-up form.
