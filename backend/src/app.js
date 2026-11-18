@@ -7,6 +7,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
+import { trustedProxies } from './proxies.js';
 import { AppError } from './utils/errors.js';
 import { httpLogger } from './logger.js';
 import { health, ready } from './health.js';
@@ -22,11 +23,8 @@ import auditRoutes from './routes/audit.js';
 
 export function createApp() {
   const app = express();
-  // Render has more than one proxy hop in front of the app, all on private addresses. Trust exactly
-  // those (loopback, link-local, private ranges), so req.ip is the first public address in
-  // X-Forwarded-For counting from the right: the visitor's address as added by Render's edge.
-  // A visitor cannot spoof it: anything they put in X-Forwarded-For sits to the left of that.
-  app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal']);
+  // Visitor IP behind Cloudflare and Render's private load balancer: see src/proxies.js.
+  app.set('trust proxy', trustedProxies());
   app.disable('x-powered-by');
   app.use(httpLogger);
   app.use(compression()); // gzip responses (JS, CSS, JSON, SVG); PDFs are already compressed and skipped by type
