@@ -142,7 +142,7 @@ npm run seed
 ```
 
    Migration 002 moves all timestamps to UTC. On a database that already has data it needs `TZ_CUTOVER_UTC`: the UTC time the "Use Kenyan time zone for database connections" deploy went live (from the Render deploy history), e.g. `TZ_CUTOVER_UTC=2026-11-17T17:40:00Z`. The dry run shows how many rows it will change.
-4. **Web service.** Create a Render web service from this repo (or use the [`Dockerfile`](Dockerfile)). Build: install and build the frontend, install the backend. Start: `npm start` inside `backend`. Set the health check path to `/api/ready`. Optionally set the pre-deploy command to `npm run migrate` so new migrations apply on deploy.
+4. **Web service.** Create a Render web service from this repo (or use the [`Dockerfile`](Dockerfile)). Build: install and build the frontend, install the backend. Start (root directory `backend`): `npm run migrate && npm start`, so new migrations apply on every deploy; ones already applied are skipped in about a second, and a lock stops two instances migrating at once. (On a paid Render plan you can use the pre-deploy command `npm run migrate` instead.) Set the health check path to `/api/ready`.
 5. **Environment variables on Render.** Render does not read your local `.env`. Required in production:
 
 | Variable | Value |
