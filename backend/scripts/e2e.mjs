@@ -419,6 +419,15 @@ ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted ev
   for (const e of [W, R]) await call('DELETE', `/api/events/${e.event_id}`, null, admin.token);
 }
 
+// --- CSV exports cannot smuggle spreadsheet formulas
+{
+  const evil = (await call('POST', '/api/events', mk({ title: `=HYPERLINK("http://x.example","${stamp}")`, capacity: 2 }), admin.token)).data.event;
+  const r = await call('GET', `/api/admin/reports/events?format=csv&from=${future}&to=${future}`, null, admin.token);
+  const text = r.data.toString('utf8');
+  ok(text.includes(`"'=HYPERLINK(`) && !/(^|,)"?=HYPERLINK/m.test(text), 'CSV cells starting with = are neutralised', text.split('\n').find((l) => l.includes(stamp)));
+  await call('DELETE', `/api/events/${evil.event_id}`, null, admin.token);
+}
+
 // --- lists: pagination, sorting, one response shape
 {
   const extra = [];
