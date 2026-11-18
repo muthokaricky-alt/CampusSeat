@@ -4,6 +4,12 @@ Web system for reserving seats at university events. Students and staff browse e
 
 ![CampusSeat events page](docs/screenshots/events-page.png)
 
+| Door check-in | Ticket on a phone | Admin dashboard |
+| --- | --- | --- |
+| ![Check-in screen](docs/screenshots/check-in.png) | ![Registration card on a phone](docs/screenshots/phone-ticket.png) | ![Admin dashboard](docs/screenshots/admin-dashboard.png) |
+
+The full walkthrough with every screen is in the [user manual](docs/CampusSeat_User_Manual.pdf).
+
 ## Live links
 
 | What | Link |
