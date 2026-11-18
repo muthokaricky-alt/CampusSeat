@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { KeyRound, Trash2 } from 'lucide-react';
+import { KeyRound, LockOpen, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useToast } from '../../context/ToastContext.jsx';
 import { Alert, ConfirmDialog, Empty, Modal, Spinner, useDebounced } from '../../components/ui.jsx';
-import { fmtDate } from '../../lib/format.js';
+import { fmtDate, fmtDateTime } from '../../lib/format.js';
 
 export default function AdminUsers() {
   const { user: me } = useAuth();
@@ -27,6 +27,10 @@ export default function AdminUsers() {
     try { const r = await api.post(`/admin/users/${resetFor.user_id}/reset-password`); setTempPw(r.temporary_password); toast.ok('Password reset.'); }
     catch (e) { toast.error(e.message); setResetFor(null); }
   };
+  const unlock = async (u) => {
+    try { await api.post(`/admin/users/${u.user_id}/unlock`); toast.ok(`${u.full_name} can log in again.`); load(); }
+    catch (e) { toast.error(e.message); }
+  };
   const remove = async () => {
     try { await api.del(`/admin/users/${deleting.user_id}`); toast.ok('User deleted.'); setDeleting(null); load(); }
     catch (e) { toast.error(e.message); setDeleting(null); }
@@ -44,11 +48,13 @@ export default function AdminUsers() {
           <thead><tr><th>Name</th><th>Student no.</th><th>School</th><th>Role</th><th>Bookings</th><th>Joined</th><th><span className="sr-only">Actions</span></th></tr></thead>
           <tbody>{users.map((u) => (
             <tr key={u.user_id}>
-              <td>{u.full_name}<br /><span className="muted small">{u.email}</span></td><td>{u.student_number}</td><td>{u.school_name}</td>
+              <td>{u.full_name}<br /><span className="muted small">{u.email}</span>
+                {u.locked_until && <><br /><span className="badge warn" title={`Locked until ${fmtDateTime(u.locked_until)}`}>Locked after failed logins</span></>}</td><td>{u.student_number}</td><td>{u.school_name}</td>
               <td><select aria-label={`Role for ${u.full_name}`} value={u.role} disabled={u.user_id === me.user_id} onChange={(e) => role(u, e.target.value)} style={{ width: 'auto', minHeight: 34, padding: '0.25rem 0.5rem' }}>
                 <option value="user">User</option><option value="admin">Admin</option></select></td>
               <td>{u.bookings}</td><td>{fmtDate(u.created_at, { day: 'numeric', month: 'short', year: 'numeric' })}</td>
               <td className="actions">
+                {u.locked_until && <button className="btn secondary sm" onClick={() => unlock(u)}><LockOpen size={15} aria-hidden />Unlock</button>}
                 <button className="btn secondary sm" onClick={() => { setTempPw(''); setResetFor(u); }}><KeyRound size={15} aria-hidden />Reset password</button>
                 <button className="btn danger sm" disabled={u.user_id === me.user_id} onClick={() => setDeleting(u)} aria-label={`Delete ${u.full_name}`}><Trash2 size={15} aria-hidden />Delete</button>
               </td>

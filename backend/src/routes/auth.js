@@ -8,6 +8,7 @@ import { audit } from '../utils/audit.js';
 import { requireAuth } from '../middleware/auth.js';
 import { clearSessionCookie, loadSession, revokeSession, revokeUserSessions, startSession } from '../sessions.js';
 import { config } from '../config.js';
+import * as lockout from '../lockout.js';
 
 const router = Router();
 // Rate limits slow down password guessing and mass sign-ups. RATE_LIMIT_SCALE lets tests raise them.
@@ -62,11 +63,20 @@ router.post('/login', loginLimiter, asyncHandler(async (req, res) => {
   const pw = typeof req.body?.password === 'string' ? req.body.password : '';
   const rows = await query('SELECT u.*, s.school_name FROM users u JOIN schools s ON s.school_id = u.school_id WHERE u.email = ?', [em]);
   const user = rows[0];
+  // Always run bcrypt (even when locked or unknown) so response times do not reveal anything.
   const ok = await bcrypt.compare(pw, user ? user.password_hash : DUMMY_HASH);
+  const lockedFor = user ? await lockout.lockRemaining(user.user_id) : lockout.ghostRemaining(em);
+  if (lockedFor > 0) {
+    await audit(user?.user_id ?? null, 'LOGIN_FAILED', `Login refused for ${em}: account locked`);
+    throw new AppError(429, 'ACCOUNT_LOCKED', lockout.lockedMessage(lockedFor), { retry_after_s: lockedFor });
+  }
   if (!user || !ok) {
+    const r = user ? await lockout.recordFailure(user.user_id) : lockout.ghostFailure(em);
     await audit(user?.user_id ?? null, 'LOGIN_FAILED', `Failed login for ${em}`);
+    if (r.locked && user) await audit(user.user_id, 'ACCOUNT_LOCKED', `Locked for ${r.minutes} min after ${config.lockoutThreshold} failed logins`);
     throw new AppError(401, 'INVALID_CREDENTIALS', 'Incorrect email or password.');
   }
+  if (user.failed_logins || user.lock_count) await lockout.recordSuccess(user.user_id);
   await audit(user.user_id, 'LOGIN');
   // Logging in from a browser that still holds another session ends that one first.
   const previous = await loadSession(req);

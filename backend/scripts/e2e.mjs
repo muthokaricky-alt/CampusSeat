@@ -119,6 +119,38 @@ ok((await call('GET', '/api/auth/me', null, u1.token)).data.user.email === `t${s
   }
 }
 
+// --- account lockout (5 failures in a row lock the account for a while)
+{
+  const u3 = await mkUser(3, comp);
+  const em3 = `t${stamp}3@test.local`;
+  const fails = [];
+  for (let i = 0; i < 5; i++) fails.push((await call('POST', '/api/auth/login', { email: em3, password: 'wrong-pass-1' })).data.error?.code);
+  ok(fails.every((c) => c === 'INVALID_CREDENTIALS'), 'first 5 wrong passwords get the normal error');
+  const lockedRes = await call('POST', '/api/auth/login', { email: em3, password: 'Passw0rd1' });
+  ok(lockedRes.status === 429 && lockedRes.data.error.code === 'ACCOUNT_LOCKED' && lockedRes.data.error.retry_after_s > 800, 'after 5 failures even the right password is refused for ~15 minutes', JSON.stringify(lockedRes.data));
+  ok((await call('GET', '/api/auth/me', null, u3.token)).status === 200, 'an existing session is not ended by the lock');
+  const ghost = `nobody${stamp}@test.local`;
+  for (let i = 0; i < 5; i++) await call('POST', '/api/auth/login', { email: ghost, password: 'wrong-pass-1' });
+  const g = await call('POST', '/api/auth/login', { email: ghost, password: 'wrong-pass-1' });
+  ok(g.data.error?.code === 'ACCOUNT_LOCKED', 'unknown emails "lock" the same way (no account enumeration)');
+  const users = (await call('GET', `/api/admin/users?search=${encodeURIComponent(em3)}`, null, admin.token)).data.users;
+  ok(users[0]?.locked_until && /Z$/.test(users[0].locked_until), 'admin user list shows the lock');
+  ok((await call('POST', `/api/admin/users/${u3.user.user_id}/unlock`, null, admin.token)).status === 200, 'admin unlocks the account');
+  ok((await login(em3, 'Passw0rd1')).res.status === 200, 'unlocked account can log in again');
+  ok((await call('GET', '/api/admin/audit-logs?action=ACCOUNT_LOCKED', null, admin.token)).data.logs.some((l) => l.email === em3), 'the lock is recorded in the audit log');
+  if (process.env.E2E_DB !== '0') {
+    // the next lock lasts twice as long (lock_count kept until a successful login)
+    const mysql = (await import('mysql2/promise')).default;
+    const { dbConfig } = await import('../src/db-config.js');
+    const db = await mysql.createConnection(dbConfig);
+    await db.execute('UPDATE users SET lock_count = 1 WHERE email = ?', [em3]);
+    for (let i = 0; i < 5; i++) await call('POST', '/api/auth/login', { email: em3, password: 'wrong-pass-1' });
+    const again = await call('POST', '/api/auth/login', { email: em3, password: 'Passw0rd1' });
+    ok(again.data.error?.retry_after_s > 25 * 60, 'a repeat lock lasts longer (30 minutes)', String(again.data.error?.retry_after_s));
+    await db.end();
+  }
+}
+
 // --- events (admin CRUD)
 const future = new Date(Date.now() + 9 * 864e5).toLocaleDateString('en-CA');
 const mk = (extra = {}) => ({ title: `E2E Event ${stamp}`, description: 'test', venue: 'Room 1', event_date: future, start_time: '10:00', end_time: '12:00', capacity: 5, school_ids: [], ...extra });
