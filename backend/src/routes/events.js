@@ -4,17 +4,18 @@ import { AppError, asyncHandler } from '../utils/errors.js';
 import * as v from '../utils/validate.js';
 import { audit } from '../utils/audit.js';
 import { optionalAuth, requireAdmin } from '../middleware/auth.js';
+import { isoFields, localToday, zonedToDate, toSqlUtc } from '../utils/time.js';
 
 const router = Router();
 
 // Shared SELECT. seats_remaining is calculated (capacity - bookings), never stored.
 const EVENT_SELECT = `
-  SELECT e.event_id, e.title, e.description, e.venue, e.event_date, e.start_time, e.end_time, e.capacity, e.created_at,
+  SELECT e.event_id, e.title, e.description, e.venue, e.event_date, e.start_time, e.end_time, e.starts_at, e.ends_at, e.capacity, e.created_at,
     (SELECT COUNT(*) FROM bookings b WHERE b.event_id = e.event_id) AS booked,
     e.capacity - (SELECT COUNT(*) FROM bookings b WHERE b.event_id = e.event_id) AS seats_remaining,
     (SELECT GROUP_CONCAT(s.school_name ORDER BY s.school_name SEPARATOR '||') FROM event_schools es JOIN schools s ON s.school_id = es.school_id WHERE es.event_id = e.event_id) AS restricted_names,
     (SELECT GROUP_CONCAT(es.school_id) FROM event_schools es WHERE es.event_id = e.event_id) AS restricted_ids,
-    (TIMESTAMP(e.event_date, e.end_time) < NOW()) AS is_past
+    (e.ends_at < UTC_TIMESTAMP()) AS is_past
   FROM events e`;
 
 function shape(row, user) {
@@ -28,6 +29,7 @@ function shape(row, user) {
     school_ids: ids,
   };
   delete out.restricted_names; delete out.restricted_ids;
+  isoFields(out);
   if (user) out.eligible = ids.length === 0 || ids.includes(user.school_id);
   return out;
 }
@@ -43,7 +45,7 @@ async function withMine(events, user) {
 router.get('/', optionalAuth, asyncHandler(async (req, res) => {
   const where = []; const params = [];
   const includePast = req.query.past === '1' && req.user?.role === 'admin';
-  if (!includePast) where.push('TIMESTAMP(e.event_date, e.end_time) >= NOW()');
+  if (!includePast) where.push('e.ends_at >= UTC_TIMESTAMP()');
   if (req.query.search) {
     const p = v.likePattern(String(req.query.search).slice(0, 100));
     where.push('(e.title LIKE ? OR e.venue LIKE ? OR e.description LIKE ?)'); params.push(p, p, p);
@@ -77,15 +79,20 @@ async function parseEvent(body, { requireFuture }) {
   const start_time = v.time(body.start_time, 'start_time', 'Start time');
   const end_time = v.time(body.end_time, 'end_time', 'End time');
   if (end_time <= start_time) throw new AppError(400, 'VALIDATION_ERROR', 'End time must be later than start time.', { field: 'end_time' });
-  if (requireFuture && event_date < new Date().toLocaleDateString('en-CA'))
+  // Dates and times are typed in Nairobi time; the database keeps the UTC instants.
+  const startsAt = zonedToDate(event_date, start_time);
+  const endsAt = zonedToDate(event_date, end_time);
+  if (requireFuture && event_date < localToday())
     throw new AppError(400, 'VALIDATION_ERROR', 'The event date cannot be in the past.', { field: 'event_date' });
+  if (requireFuture && endsAt <= new Date())
+    throw new AppError(400, 'VALIDATION_ERROR', 'This end time has already passed today.', { field: 'end_time' });
   const capacity = v.int(body.capacity, 'capacity', { min: 1, max: 100000, label: 'Capacity' });
   const school_ids = v.idList(body.school_ids, 'school_ids');
   if (school_ids.length) {
     const found = await query(`SELECT school_id FROM schools WHERE school_id IN (${school_ids.map(() => '?').join(',')})`, school_ids);
     if (found.length !== school_ids.length) throw new AppError(400, 'VALIDATION_ERROR', 'One of the selected schools does not exist.', { field: 'school_ids' });
   }
-  return { title, description, venue, event_date, start_time, end_time, capacity, school_ids };
+  return { title, description, venue, event_date, start_time, end_time, starts_at: toSqlUtc(startsAt), ends_at: toSqlUtc(endsAt), capacity, school_ids };
 }
 
 const setSchools = async (conn, eventId, ids) => {
@@ -97,8 +104,8 @@ router.post('/', requireAdmin, asyncHandler(async (req, res) => {
   const e = await parseEvent(req.body || {}, { requireFuture: true });
   const id = await withTransaction(async (conn) => {
     const [r] = await conn.execute(
-      'INSERT INTO events (title, description, venue, event_date, start_time, end_time, capacity, created_by) VALUES (?,?,?,?,?,?,?,?)',
-      [e.title, e.description, e.venue, e.event_date, e.start_time, e.end_time, e.capacity, req.user.user_id]);
+      'INSERT INTO events (title, description, venue, event_date, start_time, end_time, starts_at, ends_at, capacity, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [e.title, e.description, e.venue, e.event_date, e.start_time, e.end_time, e.starts_at, e.ends_at, e.capacity, req.user.user_id]);
     await setSchools(conn, r.insertId, e.school_ids);
     return r.insertId;
   });
@@ -116,8 +123,8 @@ router.put('/:id', requireAdmin, asyncHandler(async (req, res) => {
     const [[{ n }]] = await conn.execute('SELECT COUNT(*) AS n FROM bookings WHERE event_id = ?', [id]);
     if (e.capacity < n) throw new AppError(409, 'CAPACITY_TOO_LOW', `Capacity cannot be lower than the ${n} seats already booked.`, { field: 'capacity' });
     await conn.execute(
-      'UPDATE events SET title=?, description=?, venue=?, event_date=?, start_time=?, end_time=?, capacity=? WHERE event_id=?',
-      [e.title, e.description, e.venue, e.event_date, e.start_time, e.end_time, e.capacity, id]);
+      'UPDATE events SET title=?, description=?, venue=?, event_date=?, start_time=?, end_time=?, starts_at=?, ends_at=?, capacity=? WHERE event_id=?',
+      [e.title, e.description, e.venue, e.event_date, e.start_time, e.end_time, e.starts_at, e.ends_at, e.capacity, id]);
     await setSchools(conn, id, e.school_ids);
   });
   await audit(req.user.user_id, 'EDIT_EVENT', `Event #${id} "${e.title}"`);
