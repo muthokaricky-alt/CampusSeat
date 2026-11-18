@@ -1,0 +1,44 @@
+# Local development stack: MySQL 8.4 + CampusSeat at http://localhost:8080
+#   docker compose up --build
+# Demo logins (created by the seed): admin@campusseat.local / Admin@12345, student@campusseat.local / Student@12345
+# Emails (password resets, waitlist) are printed in the app's log: docker compose logs -f app
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: local_root_only
+      MYSQL_DATABASE: campusseat
+      MYSQL_USER: campusseat
+      MYSQL_PASSWORD: local_dev_only
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-plocal_root_only"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Development mode: plain-HTTP cookies and console emails are allowed. Production needs HTTPS.
+      NODE_ENV: development
+      PORT: 4000
+      APP_URL: http://localhost:8080
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: campusseat
+      DB_PASSWORD: local_dev_only
+      DB_NAME: campusseat
+      MAIL_DRIVER: console
+      LOG_LEVEL: info
+    # Apply migrations, add the demo data (safe to repeat), then start the server.
+    command: sh -c "node backend/scripts/migrate.js && node backend/scripts/seed.js && exec node backend/src/server.js"
+    ports:
+      - "8080:4000"
+
+volumes:
+  db-data:
