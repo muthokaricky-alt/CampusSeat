@@ -9,7 +9,8 @@
     "dev": "node --watch src/server.js",
     "migrate": "node scripts/migrate.js",
     "seed": "node scripts/seed.js",
-    "test": "node scripts/e2e.mjs"
+    "test": "node scripts/e2e.mjs",
+    "audit:protect": "node scripts/audit-protect.js"
   },
   "license": "MIT",
   "dependencies": {

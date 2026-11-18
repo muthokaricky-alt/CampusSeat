@@ -22,7 +22,7 @@ export default function Help() {
       <details><summary>How do I get a report?</summary>
         <p>Go to Reports, choose the report, filter by date, event or school, then download it as PDF or CSV. Reports carry the date and the CampusSeat name.</p></details>
       <details><summary>Where can I see who did what?</summary>
-        <p>The Audit logs page lists logins, bookings, event changes and password resets with the person and time.</p></details>
+        <p>The Audit logs page records every sign-in (and failed attempt), role change, password reset, event change, booking, cancellation and report download: who did it, when, from which IP address, and the values before and after a change. Filter by person, action, what it was about, dates or text; select Details to see exactly what changed; and select Export CSV to download what you filtered. Entries can never be edited or deleted.</p></details>
     </div>
   );
 }

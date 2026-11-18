@@ -5,6 +5,8 @@
 services:
   db:
     image: mysql:8.4
+    # Lets the app's user create the append-only triggers on audit_logs (Aiven has this on too).
+    command: --log-bin-trust-function-creators=1
     environment:
       MYSQL_ROOT_PASSWORD: local_root_only
       MYSQL_DATABASE: campusseat

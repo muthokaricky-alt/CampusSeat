@@ -48,7 +48,7 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
       if (n >= event.capacity) throw new AppError(409, 'EVENT_FULL', 'Sorry, this event is full. You can join the waitlist and get the next free seat.', { waitlist: true });
 
       const b = await seats.insertBooking(conn, me.user_id, eventId);
-      await audit(me.user_id, 'BOOK_SEAT', `Event #${eventId} "${event.title}", ref ${b.booking_ref}`, conn);
+      await audit(req, 'BOOK_SEAT', { entity: ['booking', b.booking_id], after: { event_id: eventId, user_id: me.user_id, booking_ref: b.booking_ref }, details: `Event #${eventId} "${event.title}", ref ${b.booking_ref}`, conn });
       return { ...b, event_id: eventId, seats_remaining: event.capacity - n - 1 };
     });
     res.status(201).json({ booking });
@@ -124,9 +124,10 @@ router.delete('/:id', requireAuth, asyncHandler(async (req, res) => {
       }
     }
     await conn.execute('DELETE FROM bookings WHERE booking_id = ?', [id]);
-    await audit(req.user.user_id, 'CANCEL_BOOKING',
-      `Booking ${b.booking_ref} for event #${event.event_id} "${event.title}" cancelled ${own ? 'by its owner' : 'by admin'}`, conn);
-    const promoted = await seats.promoteWaitlist(conn, event);
+    await audit(req, 'CANCEL_BOOKING', {
+      entity: ['booking', id], before: { event_id: event.event_id, user_id: b.user_id, booking_ref: b.booking_ref },
+      details: `Booking ${b.booking_ref} for event #${event.event_id} "${event.title}" cancelled ${own ? 'by its owner' : 'by admin'}`, conn });
+    const promoted = await seats.promoteWaitlist(conn, event, req);
     return { event, promoted };
   });
   seats.notifyPromoted(result.event, result.promoted);

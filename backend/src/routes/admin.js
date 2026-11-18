@@ -78,11 +78,11 @@ router.patch('/users/:id', asyncHandler(async (req, res) => {
   const role = req.body?.role;
   if (!['user', 'admin'].includes(role)) throw new AppError(400, 'VALIDATION_ERROR', 'Role must be "user" or "admin".', { field: 'role' });
   if (id === req.user.user_id) throw new AppError(400, 'SELF_CHANGE', 'You cannot change your own role.');
-  const [u] = await query('SELECT email FROM users WHERE user_id = ?', [id]);
+  const [u] = await query('SELECT email, role FROM users WHERE user_id = ?', [id]);
   if (!u) throw new AppError(404, 'NOT_FOUND', 'User not found.');
   await query('UPDATE users SET role = ? WHERE user_id = ?', [role, id]);
   await revokeUserSessions(id); // the person logs in again under the new role
-  await audit(req.user.user_id, 'CHANGE_ROLE', `${u.email} is now ${role}`);
+  await audit(req, 'CHANGE_ROLE', { entity: ['user', id], before: { role: u.role }, after: { role }, details: `${u.email} is now ${role}` });
   res.json({ ok: true });
 }));
 
@@ -91,7 +91,7 @@ router.post('/users/:id/unlock', asyncHandler(async (req, res) => {
   const [u] = await query('SELECT email FROM users WHERE user_id = ?', [id]);
   if (!u) throw new AppError(404, 'NOT_FOUND', 'User not found.');
   await unlock(id);
-  await audit(req.user.user_id, 'ACCOUNT_UNLOCK', `Unlocked ${u.email}`);
+  await audit(req, 'ACCOUNT_UNLOCK', { entity: ['user', id], details: `Unlocked ${u.email}` });
   res.json({ ok: true });
 }));
 
@@ -102,7 +102,7 @@ router.post('/users/:id/send-reset-email', asyncHandler(async (req, res) => {
   if (!u) throw new AppError(404, 'NOT_FOUND', 'User not found.');
   const r = await issueReset(u, req.ip);
   if (!r) throw new AppError(429, 'TOO_MANY_RESETS', 'A reset link was already sent 3 times in the last hour. Try again later.');
-  await audit(req.user.user_id, 'ADMIN_SEND_RESET', `Sent a password reset link to ${u.email}`);
+  await audit(req, 'ADMIN_SEND_RESET', { entity: ['user', id], details: `Sent a password reset link to ${u.email}` });
   res.json({ ok: true, sent: await r.sent });
 }));
 
@@ -115,14 +115,14 @@ router.post('/users/:id/reset-password', asyncHandler(async (req, res) => {
   await query('UPDATE users SET password_hash = ? WHERE user_id = ?', [await bcrypt.hash(temp, 12), id]);
   await revokeUserSessions(id); // whoever was logged in with the old password is logged out
   await unlock(id);
-  await audit(req.user.user_id, 'ADMIN_RESET_PASSWORD', `Reset password for ${u.email}`);
+  await audit(req, 'ADMIN_RESET_PASSWORD', { entity: ['user', id], details: `Set a temporary password for ${u.email}` });
   res.json({ temporary_password: temp });
 }));
 
 router.delete('/users/:id', asyncHandler(async (req, res) => {
   const id = v.int(req.params.id, 'id');
   if (id === req.user.user_id) throw new AppError(400, 'SELF_CHANGE', 'You cannot delete your own account.');
-  const [u] = await query('SELECT email FROM users WHERE user_id = ?', [id]);
+  const [u] = await query('SELECT email, full_name, student_number, role, school_id FROM users WHERE user_id = ?', [id]);
   if (!u) throw new AppError(404, 'NOT_FOUND', 'User not found.');
   try {
     await query('DELETE FROM users WHERE user_id = ?', [id]);
@@ -131,29 +131,11 @@ router.delete('/users/:id', asyncHandler(async (req, res) => {
       throw new AppError(409, 'IN_USE', 'This user has bookings or created events, so the account cannot be deleted. Cancel their bookings first.');
     throw err;
   }
-  await audit(req.user.user_id, 'DELETE_USER', `Deleted ${u.email}`);
+  await audit(req, 'DELETE_USER', { entity: ['user', id], before: u, details: `Deleted ${u.email}` });
   res.json({ ok: true });
 }));
 
-/* ---------- Audit logs ---------- */
-router.get('/audit-logs', asyncHandler(async (req, res) => {
-  const where = []; const params = [];
-  if (req.query.action) { where.push('a.action = ?'); params.push(String(req.query.action).slice(0, 100)); }
-  if (req.query.search) {
-    const p = v.likePattern(String(req.query.search).slice(0, 100));
-    where.push('(u.full_name LIKE ? OR u.email LIKE ? OR a.details LIKE ?)'); params.push(p, p, p);
-  }
-  // from/to are Nairobi calendar days; logged_at is UTC.
-  const range = localDayRangeUtc(req.query.from ? v.date(req.query.from, 'from') : null, req.query.to ? v.date(req.query.to, 'to') : null);
-  if (range.start) { where.push('a.logged_at >= ?'); params.push(range.start); }
-  if (range.end) { where.push('a.logged_at < ?'); params.push(range.end); }
-  const lp = listParams(req.query, { sorts: { time: 'a.logged_at', action: 'a.action' }, defaultSort: 'time', defaultDir: 'desc', tiebreak: 'a.log_id' });
-  const base = `FROM audit_logs a LEFT JOIN users u ON u.user_id = a.user_id ${where.length ? 'WHERE ' + where.join(' AND ') : ''}`;
-  const [{ total }] = await query(`SELECT COUNT(*) AS total ${base}`, params);
-  const logs = await query(`SELECT a.log_id, a.action, a.details, a.logged_at, u.full_name, u.email ${base} ${lp.orderBy} ${lp.limitSql}`, params);
-  const actions = (await query('SELECT DISTINCT action FROM audit_logs ORDER BY action')).map((r) => r.action);
-  res.json({ logs: logs.map((l) => isoFields(l)), meta: lp.meta(total), actions });
-}));
+/* Audit logs: see routes/audit.js */
 
 /* ---------- Reports (PDF / CSV / JSON), with filtering and sorting ---------- */
 const BOOKING_COLS = [
@@ -214,7 +196,8 @@ router.get('/reports/:type', asyncHandler(async (req, res) => {
     const seats = rows.reduce((a, r) => a + r.capacity, 0); const booked = rows.reduce((a, r) => a + r.booked, 0);
     totals = [`Events: ${rows.length}`, `Seats booked: ${booked} of ${seats}${seats ? ` (${Math.round((booked / seats) * 100)}%)` : ''}`];
   }
-  await audit(req.user.user_id, 'GENERATE_REPORT', `${type} report (${format})`);
+  const { format: _f, ...usedFilters } = req.query;
+  await audit(req, 'GENERATE_REPORT', { entity: ['report', type], after: { format, filters: usedFilters, rows: rows.length }, details: `${type} report (${format}), ${rows.length} row(s)` });
   const stamp = localToday();
   const title = type === 'bookings' ? 'Bookings report' : 'Events summary report';
   if (format === 'pdf') return buildReport(res, { title, filters, columns, rows, totals, filename: `campusseat-${type}-${stamp}.pdf`, orientation: 'landscape' });

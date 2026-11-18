@@ -74,7 +74,8 @@ Lists return `{ <items>: [...], meta: { page, limit, total, pages, sort, dir } }
 | GET | `/admin/stats`, `/admin/event-options` | Admin | Dashboard numbers, event picker |
 | GET, PATCH, DELETE | `/admin/users`, `/admin/users/:id` | Admin | Manage users |
 | POST | `/admin/users/:id/send-reset-email`, `/reset-password`, `/unlock` | Admin | Email a reset link, set a temporary password, unlock a locked account |
-| GET | `/admin/audit-logs` | Admin | Audit log |
+| GET | `/admin/audit-logs`, `/admin/audit-logs/:id` | Admin | Audit trail with filters (`actor`, `person`, `action=A,B`, `entity_type`, `entity_id`, `from`, `to`, `search`) |
+| GET | `/admin/audit-logs/export` | Admin | The filtered audit trail as CSV (up to 50,000 rows) |
 | GET | `/admin/reports/:type` | Admin | PDF and CSV reports |
 
 ## Run it on Windows
@@ -155,6 +156,19 @@ npm run seed
 | `RESEND_API_KEY` or `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | Credentials for the chosen mail driver |
 
 Optional: `CANCEL_CUTOFF_HOURS` (2), `SESSION_IDLE_MINUTES` (120), `SESSION_MAX_DAYS` (7), `LOCKOUT_THRESHOLD` (5), `LOCKOUT_MINUTES` (15), `RESET_TOKEN_MINUTES` (30), `LOG_LEVEL` (info). The app refuses to start, listing every problem, if a required value is missing or unsafe. `JWT_SECRET` is no longer used and can be removed.
+
+## Audit trail
+
+Every sign-in (and failed attempt), role change, password reset, two-factor change, event change, booking, cancellation, waitlist move and report download is recorded in `audit_logs` with:
+
+- **who** (`user_id` and `actor_email`, which stays even if the account is later deleted),
+- **what** (`action`, plus `entity_type` and `entity_id`, e.g. `event` 12),
+- **the change** (`before_json` / `after_json`, only the fields that changed; passwords, hashes, tokens and codes are never stored),
+- **where from** (`ip`, `user_agent`) and the **`request_id`**, which matches the `X-Request-Id` header and the server log line.
+
+Admins read it under Admin > Audit logs (filters, a before/after view, CSV export).
+
+**Append-only.** The app has no way to edit or delete entries, and the database refuses it too: migration 009 adds `BEFORE UPDATE` and `BEFORE DELETE` triggers. `GET /api/ready` shows `"audit_append_only": true` when they are in place. Creating triggers needs `log_bin_trust_function_creators=1` (Aiven has it on) or the SUPER privilege; if the database refuses, the migration prints a warning and the app still starts, and `npm run audit:protect` adds them later. Because of the triggers, a future migration that must change old audit rows has to drop and re-create them around the change.
 
 ## Tests
 

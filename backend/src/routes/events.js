@@ -1,8 +1,8 @@
 import { Router } from 'express';
-import { query, withTransaction } from '../db.js';
+import { pool, query, withTransaction } from '../db.js';
 import { AppError, asyncHandler } from '../utils/errors.js';
 import * as v from '../utils/validate.js';
-import { audit } from '../utils/audit.js';
+import { audit, diff } from '../utils/audit.js';
 import { optionalAuth, requireAdmin, requireAuth } from '../middleware/auth.js';
 import { isoFields, localToday, zonedToDate, toSqlUtc } from '../utils/time.js';
 import { listParams } from '../utils/list.js';
@@ -110,6 +110,18 @@ async function parseEvent(body, { requireFuture }) {
   return { title, description, venue, event_date, start_time, end_time, starts_at: toSqlUtc(startsAt), ends_at: toSqlUtc(endsAt), capacity, school_ids };
 }
 
+/** The admin-editable fields of an event, in the shape used for audit before/after values. */
+const auditable = (e) => ({
+  title: e.title, description: e.description ?? null, venue: e.venue, event_date: String(e.event_date).slice(0, 10),
+  start_time: String(e.start_time).slice(0, 8), end_time: String(e.end_time).slice(0, 8), capacity: Number(e.capacity),
+  school_ids: [...(e.school_ids || [])].map(Number).sort((a, b) => a - b),
+});
+async function snapshot(conn, id) {
+  const [[row]] = await conn.execute('SELECT title, description, venue, event_date, start_time, end_time, capacity FROM events WHERE event_id = ?', [id]);
+  const [ids] = await conn.execute('SELECT school_id FROM event_schools WHERE event_id = ?', [id]);
+  return row ? auditable({ ...row, school_ids: ids.map((r) => r.school_id) }) : null;
+}
+
 const setSchools = async (conn, eventId, ids) => {
   await conn.execute('DELETE FROM event_schools WHERE event_id = ?', [eventId]);
   for (const sid of ids) await conn.execute('INSERT INTO event_schools (event_id, school_id) VALUES (?, ?)', [eventId, sid]);
@@ -124,7 +136,7 @@ router.post('/', requireAdmin, asyncHandler(async (req, res) => {
     await setSchools(conn, r.insertId, e.school_ids);
     return r.insertId;
   });
-  await audit(req.user.user_id, 'CREATE_EVENT', `Event #${id} "${e.title}"`);
+  await audit(req, 'CREATE_EVENT', { entity: ['event', id], after: auditable(e), details: `Event #${id} "${e.title}"` });
   const [row] = await query(`${EVENT_SELECT} WHERE e.event_id = ?`, [id]);
   res.status(201).json({ event: shape(row, req.user) });
 }));
@@ -132,21 +144,27 @@ router.post('/', requireAdmin, asyncHandler(async (req, res) => {
 router.put('/:id', requireAdmin, asyncHandler(async (req, res) => {
   const id = v.int(req.params.id, 'id');
   const e = await parseEvent(req.body || {}, { requireFuture: false });
+  let before = null;
   const promoted = await withTransaction(async (conn) => {
     const cur = await seats.lockEvent(conn, id); // lock first: see seats.js
     if (!cur) throw new AppError(404, 'NOT_FOUND', 'Event not found.');
     const n = await seats.bookedCount(conn, id);
     if (e.capacity < n) throw new AppError(409, 'CAPACITY_TOO_LOW', `Capacity cannot be lower than the ${n} seats already booked.`, { field: 'capacity' });
+    before = await snapshot(conn, id); // read after the lock, so it is the current version
     await conn.execute(
       'UPDATE events SET title=?, description=?, venue=?, event_date=?, start_time=?, end_time=?, starts_at=?, ends_at=?, capacity=? WHERE event_id=?',
       [e.title, e.description, e.venue, e.event_date, e.start_time, e.end_time, e.starts_at, e.ends_at, e.capacity, id]);
     await setSchools(conn, id, e.school_ids);
     // More seats (or a later date): give them to the waitlist straight away.
     const [[isPast]] = await conn.execute('SELECT ? < UTC_TIMESTAMP() AS p', [e.ends_at]);
-    return seats.promoteWaitlist(conn, { ...cur, title: e.title, capacity: e.capacity, is_past: !!Number(isPast.p) });
+    return seats.promoteWaitlist(conn, { ...cur, title: e.title, capacity: e.capacity, is_past: !!Number(isPast.p) }, req);
   });
   seats.notifyPromoted({ title: e.title, event_date: e.event_date, start_time: e.start_time }, promoted);
-  await audit(req.user.user_id, 'EDIT_EVENT', `Event #${id} "${e.title}"${promoted.length ? `; ${promoted.length} promoted from the waitlist` : ''}`);
+  const d = diff(before, auditable(e));
+  await audit(req, 'EDIT_EVENT', {
+    entity: ['event', id], before: d.before, after: d.after,
+    details: `Event #${id} "${e.title}": ${d.changed.length ? `changed ${d.changed.join(', ')}` : 'no changes'}${promoted.length ? `; ${promoted.length} promoted from the waitlist` : ''}`,
+  });
   const [row] = await query(`${EVENT_SELECT} WHERE e.event_id = ?`, [id]);
   res.json({ event: shape(row, req.user) });
 }));
@@ -173,7 +191,7 @@ router.post('/:id/waitlist', requireAuth, asyncHandler(async (req, res) => {
       if (existing) await conn.execute('DELETE FROM waitlist WHERE waitlist_id = ?', [existing.waitlist_id]); // rejoin goes to the back
       const [ins] = await conn.execute('INSERT INTO waitlist (event_id, user_id) VALUES (?, ?)', [id, me.user_id]);
       const position = await seats.waitlistPosition(conn, id, ins.insertId);
-      await audit(me.user_id, 'WAITLIST_JOIN', `Event #${id} "${event.title}", position ${position}`, conn);
+      await audit(req, 'WAITLIST_JOIN', { entity: ['event', id], after: { waitlist_id: ins.insertId, position }, details: `Event #${id} "${event.title}", position ${position}`, conn });
       return { waitlist_id: ins.insertId, event_id: id, position };
     });
     res.status(201).json({ waitlist: out });
@@ -189,7 +207,7 @@ router.delete('/:id/waitlist', requireAuth, asyncHandler(async (req, res) => {
     const event = await seats.lockEvent(conn, id);
     if (!event) throw new AppError(404, 'NOT_FOUND', 'Event not found.');
     const [r] = await conn.execute("DELETE FROM waitlist WHERE event_id = ? AND user_id = ? AND status = 'waiting'", [id, req.user.user_id]);
-    if (r.affectedRows) await audit(req.user.user_id, 'WAITLIST_LEAVE', `Event #${id} "${event.title}"`, conn);
+    if (r.affectedRows) await audit(req, 'WAITLIST_LEAVE', { entity: ['event', id], details: `Event #${id} "${event.title}"`, conn });
     return r.affectedRows;
   });
   if (!left) throw new AppError(404, 'NOT_WAITING', 'You are not on the waitlist for this event.');
@@ -209,8 +227,9 @@ router.delete('/:id', requireAdmin, asyncHandler(async (req, res) => {
   const id = v.int(req.params.id, 'id');
   const [ev] = await query('SELECT title, (SELECT COUNT(*) FROM bookings WHERE event_id = ?) AS n FROM events WHERE event_id = ?', [id, id]);
   if (!ev) throw new AppError(404, 'NOT_FOUND', 'Event not found.');
+  const before = await snapshot(pool, id);
   await query('DELETE FROM events WHERE event_id = ?', [id]); // bookings + restrictions cascade
-  await audit(req.user.user_id, 'DELETE_EVENT', `Event #${id} "${ev.title}" (removed ${ev.n} bookings)`);
+  await audit(req, 'DELETE_EVENT', { entity: ['event', id], before: { ...before, bookings_removed: Number(ev.n) }, details: `Event #${id} "${ev.title}" (removed ${ev.n} bookings)` });
   res.json({ ok: true, removed_bookings: Number(ev.n) });
 }));
 

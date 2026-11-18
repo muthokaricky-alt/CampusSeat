@@ -498,6 +498,97 @@ ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted ev
   }
 }
 
+// --- audit trail: who, what, before/after, where from; filters; CSV export; append-only
+{
+  const logs = async (qs) => (await call('GET', `/api/admin/audit-logs?${qs}`, null, admin.token)).data;
+  const em = `t${stamp}a1@test.local`;
+  const au = await mkUser('a1', comp);
+  const lg = await login(em, 'Passw0rd1');
+  const rid = lg.res.headers.get('x-request-id');
+  const entry = (await logs(`search=${rid}`)).logs.find((l) => l.action === 'LOGIN');
+  ok(entry && entry.request_id === rid && entry.ip && /node|undici/i.test(entry.user_agent || '') && entry.actor_email === em && entry.entity_type === 'user' && entry.entity_id === String(au.user.user_id),
+    'login entry records actor, entity, IP, user agent and the request id', JSON.stringify(entry));
+  await call('POST', '/api/auth/login', { email: `ghost-${stamp}@test.local`, password: 'wrong-pass-1' });
+  const ghost = (await logs(`action=LOGIN_FAILED&search=${encodeURIComponent(`ghost-${stamp}`)}`)).logs[0];
+  ok(ghost && ghost.actor_id === null && ghost.entity_type === null && ghost.details.includes(`ghost-${stamp}`), 'failed login for an unknown email is logged without an actor');
+
+  await call('PATCH', `/api/admin/users/${au.user.user_id}`, { role: 'admin' }, admin.token);
+  const role = (await logs(`action=CHANGE_ROLE&entity_type=user&entity_id=${au.user.user_id}`)).logs[0];
+  ok(role?.before?.role === 'user' && role?.after?.role === 'admin' && role.actor_email === 'admin@campusseat.local', 'role change stores before and after');
+  await call('PATCH', `/api/admin/users/${au.user.user_id}`, { role: 'user' }, admin.token);
+
+  const ae = (await call('POST', '/api/events', mk({ title: `Audit ${stamp}`, capacity: 5 }), admin.token)).data.event;
+  const created = (await logs(`action=CREATE_EVENT&entity_type=event&entity_id=${ae.event_id}`)).logs[0];
+  ok(created?.after?.title === `Audit ${stamp}` && created.after.capacity === 5 && created.before === null, 'event creation stores the new values');
+  await call('PUT', `/api/events/${ae.event_id}`, mk({ title: `Audit ${stamp}`, capacity: 8, venue: 'Hall 9' }), admin.token);
+  const edit = (await logs(`action=EDIT_EVENT&entity_type=event&entity_id=${ae.event_id}`)).logs[0];
+  ok(edit && JSON.stringify(edit.before) === JSON.stringify({ venue: 'Room 1', capacity: 5 }) && JSON.stringify(edit.after) === JSON.stringify({ venue: 'Hall 9', capacity: 8 }) && /changed venue, capacity/.test(edit.details),
+    'event edit stores only the changed fields, before and after', JSON.stringify({ b: edit?.before, a: edit?.after, d: edit?.details }));
+  lg.token = (await login(em, 'Passw0rd1')).token; // the role changes above ended their sessions
+  const lb = (await book({ ...au, token: lg.token }, ae.event_id)).data.booking;
+  const bookE = (await logs(`action=BOOK_SEAT&entity_type=booking&entity_id=${lb.booking_id}`)).logs[0];
+  ok(bookE?.after?.booking_ref === lb.booking_ref && bookE.after.event_id === ae.event_id, 'booking entry points at the booking with its reference');
+  await call('DELETE', `/api/bookings/${lb.booking_id}`, null, lg.token);
+  const cxE = (await logs(`action=CANCEL_BOOKING&entity_type=booking&entity_id=${lb.booking_id}`)).logs[0];
+  ok(cxE?.before?.booking_ref === lb.booking_ref && /by its owner/.test(cxE.details), 'cancellation stores the booking that was removed');
+
+  // filters
+  const multi = await logs(`action=BOOK_SEAT,CANCEL_BOOKING&search=${encodeURIComponent(`Audit ${stamp}`)}`);
+  ok(multi.meta.total === 2 && multi.logs.every((l) => ['BOOK_SEAT', 'CANCEL_BOOKING'].includes(l.action)), 'filter by several actions at once');
+  const byEvent = await logs(`entity_type=event&entity_id=${ae.event_id}`);
+  ok(byEvent.meta.total === 2 && byEvent.entity_types.includes('event'), 'filter by entity (everything that happened to one event)');
+  const byPerson = await logs(`person=${encodeURIComponent(em)}&limit=100`);
+  ok(byPerson.meta.total >= 4 && byPerson.logs.every((l) => l.actor_email === em), 'filter by person (email)');
+  const byActor = await logs(`actor=${au.user.user_id}&limit=100`);
+  ok(byActor.meta.total === byPerson.meta.total, 'filter by actor id matches the person filter');
+  const detail = (await call('GET', `/api/admin/audit-logs/${edit.log_id}`, null, admin.token)).data.log;
+  ok(detail?.log_id === edit.log_id && detail.user_agent && detail.has_changes === true, 'single entry with full detail');
+
+  // nothing secret ends up in the trail
+  const recent = JSON.stringify((await logs('limit=100')).logs);
+  ok(!recent.includes('Passw0rd1') && !recent.includes('NewPass123') && !/password_hash|"token"|csrf_token/.test(recent), 'audit entries contain no passwords, hashes or tokens');
+
+  // report downloads record their filters
+  await call('GET', `/api/admin/reports/bookings?format=csv&event_id=${ae.event_id}&sort=name`, null, admin.token);
+  const rep = (await logs('action=GENERATE_REPORT&limit=1')).logs[0];
+  ok(rep?.after?.format === 'csv' && rep.after.filters.event_id === String(ae.event_id) && typeof rep.after.rows === 'number', 'report download records format, filters and row count');
+
+  // CSV export
+  const ex = await call('GET', `/api/admin/audit-logs/export?entity_type=event&entity_id=${ae.event_id}`, null, admin.token);
+  const csv = ex.data.toString('utf8').replace(/^﻿/, '').trim().split('\n');
+  ok(ex.ct.includes('text/csv') && /audit-\d{4}-\d{2}-\d{2}\.csv/.test(ex.headers.get('content-disposition')) && csv[0].startsWith('Time (EAT),Time (UTC),Actor email'), 'audit export is a CSV file with a header row');
+  ok(csv.length - 1 === byEvent.meta.total && csv.slice(1).every((l) => l.includes(String(ae.event_id))), 'export contains exactly the filtered entries');
+  ok((await logs('action=AUDIT_EXPORT&limit=1')).logs[0]?.after?.rows === byEvent.meta.total, 'the export itself is audited with its filters and size');
+  ok((await call('GET', '/api/admin/audit-logs/export', null, u1.token)).status === 403, 'only admins can export the audit trail');
+
+  // append-only
+  const changeTries = await Promise.all(['PUT', 'PATCH', 'DELETE'].map((m) => call(m, `/api/admin/audit-logs/${edit.log_id}`, { action: 'X' }, admin.token)));
+  ok(changeTries.every((r) => r.status === 404), 'there is no API to change or delete audit entries');
+  ok((await call('GET', '/api/ready')).data.audit_append_only === true, 'readiness reports the database-level append-only protection');
+  if (process.env.E2E_DB !== '0') {
+    const mysql = (await import('mysql2/promise')).default;
+    const { dbConfig } = await import('../src/db-config.js');
+    const db = await mysql.createConnection(dbConfig);
+    const tryIt = async (sql) => { try { await db.query(sql, [edit.log_id]); return 'allowed'; } catch (e) { return e.sqlState; } };
+    ok(await tryIt("UPDATE audit_logs SET details = 'rewritten' WHERE log_id = ?") === '45000', 'database refuses UPDATE on audit rows');
+    ok(await tryIt('DELETE FROM audit_logs WHERE log_id = ?') === '45000', 'database refuses DELETE on audit rows');
+    await db.end();
+  }
+  // deleting a user keeps their history (email kept, link cleared)
+  const gone = await mkUser('a2', comp);
+  const goneEmail = `t${stamp}a2@test.local`;
+  await login(goneEmail, 'Passw0rd1');
+  const del = await call('DELETE', `/api/admin/users/${gone.user.user_id}`, null, admin.token);
+  const kept = (await logs(`person=${encodeURIComponent(goneEmail)}&limit=100`)).logs;
+  ok(del.status === 200 && kept.length >= 2 && kept.some((l) => l.action === 'LOGIN' && l.actor_id === null && l.actor_email === goneEmail),
+    'deleting a user still works and their audit history keeps their email', JSON.stringify({ s: del.status, n: kept.length }));
+  const delE = (await logs(`action=DELETE_USER&entity_id=${gone.user.user_id}`)).logs[0];
+  ok(delE?.before?.email === goneEmail && delE.before.role === 'user', 'user deletion stores who was deleted');
+  await call('DELETE', `/api/events/${ae.event_id}`, null, admin.token);
+  const delEv = (await logs(`action=DELETE_EVENT&entity_type=event&entity_id=${ae.event_id}`)).logs[0];
+  ok(delEv?.before?.title === `Audit ${stamp}` && delEv.before.bookings_removed === 0, 'event deletion stores the removed event');
+}
+
 // --- operations: health, readiness, request ids, config validation
 const h = await call('GET', '/api/health');
 ok(h.status === 200 && h.data.db?.ok === true && typeof h.data.db.latency_ms === 'number', 'health reports database ok with latency');
