@@ -16,6 +16,7 @@ import schoolRoutes from './routes/schools.js';
 import eventRoutes from './routes/events.js';
 import bookingRoutes from './routes/bookings.js';
 import adminRoutes from './routes/admin.js';
+import accountRoutes from './routes/account.js';
 
 export function createApp() {
   const app = express();
@@ -35,6 +36,7 @@ export function createApp() {
     app.get('/api/_test/mail', (req, res) => res.json({ messages: sentTo(String(req.query.to || '')) }));
   }
   app.use('/api/auth', authRoutes);
+  app.use('/api/account', accountRoutes);
   app.use('/api/schools', schoolRoutes);
   app.use('/api/events', eventRoutes);
   app.use('/api/bookings', bookingRoutes);

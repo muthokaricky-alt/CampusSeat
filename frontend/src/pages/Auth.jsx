@@ -20,17 +20,40 @@ function useSubmit(action) {
 }
 
 export function Login() {
-  const { user, login } = useAuth();
+  const { user, login, verify2fa } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
   const toast = useToast();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const { errors, formError, busy, submit } = useSubmit(async () => {
-    const u = await login(email, password);
+  const [challenge, setChallenge] = useState(null);
+  const [code, setCode] = useState('');
+  const done = (u) => {
     toast.ok(`Welcome back, ${u.full_name.split(' ')[0]}.`);
     nav(loc.state?.from || (u.role === 'admin' ? '/admin' : '/'), { replace: true });
+  };
+  const { errors, formError, busy, submit } = useSubmit(async () => {
+    if (challenge) {
+      try { done(await verify2fa(challenge, code)); }
+      catch (err) { if (err.code === 'CHALLENGE_EXPIRED' || err.code === 'ACCOUNT_LOCKED') { setChallenge(null); setCode(''); } throw err; }
+      return;
+    }
+    const r = await login(email, password);
+    if (r.mfa_required) { setChallenge(r.challenge); setPassword(''); return; }
+    done(r);
   });
+  if (challenge && !user) return (
+    <div className="auth-wrap card">
+      <h1 style={{ fontSize: '1.8rem' }}>Two-factor check</h1>
+      <p className="muted">Open your authenticator app and enter the 6-digit code for CampusSeat. Lost your phone? Enter one of your backup codes instead.</p>
+      {formError && <Alert>{formError}</Alert>}
+      <form onSubmit={submit} noValidate style={{ marginTop: '1rem' }}>
+        <Field label="Code" error={errors.code}>{(p) => <input {...p} inputMode="numeric" autoComplete="one-time-code" autoFocus value={code} onChange={(e) => setCode(e.target.value)} placeholder="123 456" />}</Field>
+        <button className="btn block" disabled={busy || !code.trim()}>{busy ? 'Checking…' : 'Verify and log in'}</button>
+      </form>
+      <p className="small" style={{ marginTop: '1rem' }}><button type="button" className="linklike" onClick={() => { setChallenge(null); setCode(''); }}>Use a different account</button></p>
+    </div>
+  );
   // Already signed in (or just signed in): go back to where the person was heading.
   if (user) return <Navigate to={loc.state?.from || (user.role === 'admin' ? '/admin' : '/')} replace />;
   return (
