@@ -30,7 +30,9 @@ router.get('/stats', asyncHandler(async (_req, res) => {
       (SELECT COUNT(*) FROM events) AS total_events,
       (SELECT COUNT(*) FROM waitlist w JOIN events e ON e.event_id = w.event_id WHERE w.status = 'waiting' AND e.ends_at >= UTC_TIMESTAMP()) AS waiting,
       (SELECT COALESCE(SUM(capacity), 0) FROM events WHERE ends_at >= UTC_TIMESTAMP()) AS upcoming_seats,
-      (SELECT COUNT(*) FROM bookings b JOIN events e ON e.event_id = b.event_id WHERE e.ends_at >= UTC_TIMESTAMP()) AS upcoming_booked`);
+      (SELECT COUNT(*) FROM bookings b JOIN events e ON e.event_id = b.event_id WHERE e.ends_at >= UTC_TIMESTAMP()) AS upcoming_booked,
+      (SELECT COUNT(*) FROM bookings b JOIN events e ON e.event_id = b.event_id WHERE e.ends_at < UTC_TIMESTAMP() AND e.ends_at >= UTC_TIMESTAMP() - INTERVAL 30 DAY) AS recent_booked,
+      (SELECT COUNT(*) FROM check_ins c JOIN bookings b ON b.booking_id = c.booking_id JOIN events e ON e.event_id = b.event_id WHERE e.ends_at < UTC_TIMESTAMP() AND e.ends_at >= UTC_TIMESTAMP() - INTERVAL 30 DAY) AS recent_attended`);
   const [week] = await query(`SELECT
       SUM(booked_at >= ?) AS bookings, SUM(booked_at < ?) AS bookings_prev
     FROM bookings WHERE booked_at >= ?`, [start7, start7, start14]);
@@ -171,11 +173,13 @@ const BOOKING_COLS = [
   { key: 'booking_ref', label: 'Booking ref', w: 1.3 }, { key: 'full_name', label: 'Name', w: 1.6 },
   { key: 'student_number', label: 'Student no.', w: 1.1 }, { key: 'school_name', label: 'School', w: 1.8 },
   { key: 'title', label: 'Event', w: 1.8 }, { key: 'event_date', label: 'Event date', w: 1.1 }, { key: 'booked_at', label: 'Booked at (EAT)', w: 1.3 },
+  { key: 'attended', label: 'Attended', w: 0.8 },
 ];
 const EVENT_COLS = [
   { key: 'title', label: 'Event', w: 2.2 }, { key: 'event_date', label: 'Date', w: 1 }, { key: 'venue', label: 'Venue', w: 1.5 },
   { key: 'capacity', label: 'Capacity', w: 0.8 }, { key: 'booked', label: 'Booked', w: 0.8 }, { key: 'remaining', label: 'Seats left', w: 0.9 },
-  { key: 'fill', label: 'Filled', w: 0.8 }, { key: 'restriction', label: 'Open to', w: 1.6 },
+  { key: 'fill', label: 'Filled', w: 0.8 }, { key: 'attended', label: 'Attended', w: 0.8 }, { key: 'no_show', label: 'No-shows', w: 0.8 },
+  { key: 'restriction', label: 'Open to', w: 1.4 },
 ];
 const SORTS = {
   bookings: { booked_at: 'b.booked_at', name: 'u.full_name', event: 'e.title', school: 's.school_name', ref: 'b.booking_ref' },
@@ -204,8 +208,10 @@ router.get('/reports/:type', asyncHandler(async (req, res) => {
     if (range.end) { where.push('b.booked_at < ?'); params.push(range.end); }
     if (from || to) filters.push(`Booked between: ${from || 'start'} and ${to || 'today'}`);
     rows = await query(`
-      SELECT b.booking_ref, u.full_name, u.student_number, s.school_name, e.title, e.event_date, b.booked_at
+      SELECT b.booking_ref, u.full_name, u.student_number, s.school_name, e.title, e.event_date, b.booked_at,
+             IF(c.booking_id IS NULL, IF(e.ends_at < UTC_TIMESTAMP(), 'No', ''), 'Yes') AS attended
       FROM bookings b JOIN users u ON u.user_id = b.user_id JOIN schools s ON s.school_id = u.school_id JOIN events e ON e.event_id = b.event_id
+      LEFT JOIN check_ins c ON c.booking_id = b.booking_id
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY ${sortCol} ${dir}, b.booking_id`, params);
     // Reports are read by people: show booking times in Nairobi time (the JSON format keeps ISO UTC).
     rows = rows.map((r) => ({ ...r, booked_at: format === 'json' ? isoFields({ booked_at: r.booked_at }).booked_at : sqlToLocal(r.booked_at) }));
@@ -218,12 +224,18 @@ router.get('/reports/:type', asyncHandler(async (req, res) => {
     const raw = await query(`
       SELECT e.title, e.event_date, e.venue, e.capacity,
         (SELECT COUNT(*) FROM bookings b WHERE b.event_id = e.event_id) AS booked,
+        (SELECT COUNT(*) FROM check_ins c JOIN bookings b ON b.booking_id = c.booking_id WHERE b.event_id = e.event_id) AS attended_n,
+        (e.ends_at < UTC_TIMESTAMP()) AS ended,
         (SELECT GROUP_CONCAT(s.school_name SEPARATOR ', ') FROM event_schools es JOIN schools s ON s.school_id = es.school_id WHERE es.event_id = e.event_id) AS restriction
       FROM events e ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY ${sortCol} ${dir}`, params);
-    rows = raw.map((r) => ({ ...r, booked: Number(r.booked), remaining: r.capacity - Number(r.booked),
-      fill: `${Math.round((Number(r.booked) / r.capacity) * 100)}%`, restriction: r.restriction || 'Everyone' }));
+    rows = raw.map(({ attended_n, ended, ...r }) => ({ ...r, booked: Number(r.booked), remaining: r.capacity - Number(r.booked),
+      fill: `${Math.round((Number(r.booked) / r.capacity) * 100)}%`, restriction: r.restriction || 'Everyone',
+      attended: Number(attended_n), no_show: Number(ended) ? Number(r.booked) - Number(attended_n) : '' }));
     const seats = rows.reduce((a, r) => a + r.capacity, 0); const booked = rows.reduce((a, r) => a + r.booked, 0);
-    totals = [`Events: ${rows.length}`, `Seats booked: ${booked} of ${seats}${seats ? ` (${Math.round((booked / seats) * 100)}%)` : ''}`];
+    const endedRows = rows.filter((r) => r.no_show !== '');
+    const endedBooked = endedRows.reduce((a, r) => a + r.booked, 0); const endedAttended = endedRows.reduce((a, r) => a + r.attended, 0);
+    totals = [`Events: ${rows.length}`, `Seats booked: ${booked} of ${seats}${seats ? ` (${Math.round((booked / seats) * 100)}%)` : ''}`,
+      ...(endedBooked ? [`Attendance at finished events: ${endedAttended} of ${endedBooked} (${Math.round((endedAttended / endedBooked) * 100)}%)`] : [])];
   }
   const { format: _f, ...usedFilters } = req.query;
   await audit(req, 'GENERATE_REPORT', { entity: ['report', type], after: { format, filters: usedFilters, rows: rows.length }, details: `${type} report (${format}), ${rows.length} row(s)` });

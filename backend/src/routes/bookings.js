@@ -61,11 +61,12 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
 const BOOKING_SELECT = `
   SELECT b.booking_id, b.booking_ref, b.booked_at, b.event_id,
          e.title, e.venue, e.event_date, e.start_time, e.end_time, e.starts_at, e.ends_at,
-         u.user_id, u.full_name, u.student_number, u.email, s.school_name
+         u.user_id, u.full_name, u.student_number, u.email, s.school_name, ci.checked_in_at
   FROM bookings b
   JOIN events e ON e.event_id = b.event_id
   JOIN users u ON u.user_id = b.user_id
-  JOIN schools s ON s.school_id = u.school_id`;
+  JOIN schools s ON s.school_id = u.school_id
+  LEFT JOIN check_ins ci ON ci.booking_id = b.booking_id`;
 
 router.get('/mine', requireAuth, asyncHandler(async (req, res) => {
   const lp = listParams(req.query, { sorts: { date: 'e.starts_at', booked_at: 'b.booked_at' }, defaultSort: 'date', defaultDir: 'desc', tiebreak: 'b.booking_id' });
@@ -73,7 +74,7 @@ router.get('/mine', requireAuth, asyncHandler(async (req, res) => {
   if (req.query.event_id) { where.push('b.event_id = ?'); params.push(v.int(req.query.event_id, 'event_id')); }
   const [{ total }] = await query(`SELECT COUNT(*) AS total FROM bookings b WHERE ${where.join(' AND ')}`, params);
   const rows = await query(`${BOOKING_SELECT} WHERE ${where.join(' AND ')} ${lp.orderBy} ${lp.limitSql}`, params);
-  res.json({ bookings: rows.map((r) => isoFields(r)), meta: lp.meta(total) });
+  res.json({ bookings: rows.map((r) => isoFields(r, ['booked_at', 'starts_at', 'ends_at', 'checked_in_at'])), meta: lp.meta(total) });
 }));
 
 // QR code of the booking reference for the on-screen card (same data as on the PDF card).
@@ -99,6 +100,8 @@ router.get('/:id/card', requireAuth, asyncHandler(async (req, res) => {
 router.get('/', requireAdmin, asyncHandler(async (req, res) => {
   const where = []; const params = [];
   if (req.query.event_id) { where.push('b.event_id = ?'); params.push(v.int(req.query.event_id, 'event_id')); }
+  if (req.query.attended === '1') where.push('EXISTS (SELECT 1 FROM check_ins c WHERE c.booking_id = b.booking_id)');
+  if (req.query.attended === '0') where.push('NOT EXISTS (SELECT 1 FROM check_ins c WHERE c.booking_id = b.booking_id)');
   if (req.query.search) {
     const p = v.likePattern(String(req.query.search).slice(0, 100));
     where.push('(u.full_name LIKE ? OR u.student_number LIKE ? OR b.booking_ref LIKE ? OR u.email LIKE ?)'); params.push(p, p, p, p);
@@ -110,7 +113,7 @@ router.get('/', requireAdmin, asyncHandler(async (req, res) => {
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const [{ total }] = await query(`SELECT COUNT(*) AS total FROM bookings b JOIN users u ON u.user_id = b.user_id ${whereSql}`, params);
   const rows = await query(`${BOOKING_SELECT} ${whereSql} ${lp.orderBy} ${lp.limitSql}`, params);
-  res.json({ bookings: rows.map((r) => isoFields(r)), meta: lp.meta(total) });
+  res.json({ bookings: rows.map((r) => isoFields(r, ['booked_at', 'starts_at', 'ends_at', 'checked_in_at'])), meta: lp.meta(total) });
 }));
 
 /**
@@ -125,10 +128,12 @@ router.delete('/:id', requireAuth, asyncHandler(async (req, res) => {
   if (!found || (found.user_id !== req.user.user_id && !isAdmin)) throw new AppError(404, 'NOT_FOUND', 'Booking not found.');
   const result = await withTransaction(async (conn) => {
     const event = await seats.lockEvent(conn, found.event_id);
-    const [[b]] = await conn.execute('SELECT booking_id, booking_ref, user_id FROM bookings WHERE booking_id = ? FOR UPDATE', [id]);
+    const [[b]] = await conn.execute(
+      'SELECT b.booking_id, b.booking_ref, b.user_id, (c.booking_id IS NOT NULL) AS used FROM bookings b LEFT JOIN check_ins c ON c.booking_id = b.booking_id WHERE b.booking_id = ? FOR UPDATE', [id]);
     if (!event || !b) throw new AppError(404, 'NOT_FOUND', 'Booking not found.'); // cancelled meanwhile
     const own = b.user_id === req.user.user_id;
     if (!isAdmin) {
+      if (Number(b?.used)) throw new AppError(409, 'ALREADY_USED', 'This ticket has already been used at the door, so it cannot be cancelled.');
       if (event.is_past) throw new AppError(409, 'EVENT_PAST', 'This event has already taken place.');
       const cut = seats.cancelCutoff(event);
       if (!cut.allowed) {

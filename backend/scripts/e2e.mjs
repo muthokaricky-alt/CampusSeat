@@ -647,6 +647,102 @@ ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted ev
   ok(['waiting', 'upcoming_seats', 'upcoming_booked'].every((k) => isNum(s.totals[k])) && s.totals.upcoming_booked <= s.totals.upcoming_seats, 'seat fill and waitlist totals are consistent');
 }
 
+// --- categories
+{
+  const w = (await call('POST', '/api/events', mk({ title: `Cat ${stamp}`, category: 'workshop' }), admin.token)).data.event;
+  ok(w?.category === 'workshop', 'an event can be given a category');
+  ok((await call('POST', '/api/events', mk({ title: `Cat2 ${stamp}`, category: 'rave' }), admin.token)).data.error?.field === 'category', 'unknown categories are refused');
+  const plain = (await call('POST', '/api/events', mk({ title: `Cat3 ${stamp}` }), admin.token)).data.event;
+  ok(plain?.category === 'other', "events without a category are 'other'");
+  const found = (await call('GET', `/api/events?category=workshop,talk&search=${encodeURIComponent('Cat')}`)).data.events.map((e) => e.event_id);
+  ok(found.includes(w.event_id) && !found.includes(plain.event_id), 'events can be filtered by one or more categories');
+  ok((await call('GET', '/api/events?category=nope')).status === 400, 'filtering by an unknown category is refused');
+  await call('PUT', `/api/events/${w.event_id}`, mk({ title: `Cat ${stamp}`, category: 'talk' }), admin.token);
+  const ed = (await call('GET', `/api/admin/audit-logs?action=EDIT_EVENT&entity_type=event&entity_id=${w.event_id}`, null, admin.token)).data.logs[0];
+  ok(ed?.before?.category === 'workshop' && ed.after.category === 'talk', 'category changes are audited');
+  for (const e of [w, plain]) await call('DELETE', `/api/events/${e.event_id}`, null, admin.token);
+}
+
+// --- saved events
+{
+  const s1 = await mkUser('s1', comp);
+  const ev1 = (await call('POST', '/api/events', mk({ title: `Save ${stamp}` }), admin.token)).data.event;
+  ok((await call('PUT', `/api/events/${ev1.event_id}/save`, null, s1.token)).data.saved === true, 'a person can save an event');
+  ok((await call('PUT', `/api/events/${ev1.event_id}/save`, null, s1.token)).status === 200, 'saving twice is harmless');
+  ok((await call('GET', `/api/events/${ev1.event_id}`, null, s1.token)).data.event.my_saved === true, 'the event shows it is saved');
+  ok((await call('GET', '/api/events?saved=1', null, s1.token)).data.events.some((e) => e.event_id === ev1.event_id), 'saved events can be listed');
+  ok((await call('GET', '/api/events?saved=1')).status === 401, 'the saved list needs a login');
+  ok((await call('PUT', '/api/events/999999/save', null, s1.token)).status === 404, 'saving a missing event is a 404');
+  await call('DELETE', `/api/events/${ev1.event_id}/save`, null, s1.token);
+  ok((await call('GET', '/api/events?saved=1', null, s1.token)).data.events.length === 0, 'an event can be unsaved');
+  await call('DELETE', `/api/events/${ev1.event_id}`, null, admin.token);
+}
+
+// --- door check-in and attendance
+{
+  const nbo = (d) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    .formatToParts(d).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
+  const a0 = nbo(new Date(Date.now() + 60 * 60e3)); const b0 = nbo(new Date(Date.now() + 120 * 60e3));
+  if (`${a0.year}-${a0.month}-${a0.day}` === `${b0.year}-${b0.month}-${b0.day}`) {
+    const D = (await call('POST', '/api/events', mk({ title: `Door ${stamp}`, event_date: `${a0.year}-${a0.month}-${a0.day}`, start_time: `${a0.hour}:${a0.minute}`, end_time: `${b0.hour}:${b0.minute}` }), admin.token)).data.event;
+    const far = (await call('POST', '/api/events', mk({ title: `Far ${stamp}` }), admin.token)).data.event;
+    const g = await Promise.all(['c1', 'c2', 'c3'].map((i) => mkUser(i, comp)));
+    const refs = [];
+    for (const u of g) refs.push((await book(u, D.event_id)).data.booking);
+    const farRef = (await book(g[0], far.event_id)).data.booking.booking_ref;
+    ok((await call('POST', '/api/admin/check-in', { ref: refs[0].booking_ref }, g[0].token)).status === 403, 'only admins can check people in');
+    ok((await call('POST', '/api/admin/check-in', { ref: 'hello' }, admin.token)).data.error?.field === 'ref', 'something that is not a reference is refused');
+    ok((await call('POST', '/api/admin/check-in', { ref: 'CS-2026-99999' }, admin.token)).status === 404, 'an unknown reference is a 404');
+    const typed = refs[0].booking_ref.toLowerCase().replace(/-/g, ' ');
+    const first = await call('POST', '/api/admin/check-in', { ref: typed, event_id: D.event_id }, admin.token);
+    ok(first.status === 201 && first.data.check_in.full_name === 'Test User c1' && first.data.counts.checked_in === 1 && first.data.counts.booked === 3,
+      'a typed reference (any case, spaces instead of dashes) checks the person in', JSON.stringify(first.data));
+    const again = await call('POST', '/api/admin/check-in', { ref: refs[0].booking_ref }, admin.token);
+    ok(again.data.error?.code === 'ALREADY_CHECKED_IN' && again.data.error.person?.checked_in_at, 'a ticket cannot be used twice (shows when it was first used)');
+    ok((await call('POST', '/api/admin/check-in', { ref: farRef, event_id: D.event_id }, admin.token)).data.error?.code === 'WRONG_EVENT', 'a ticket for another event is flagged');
+    ok((await call('POST', '/api/admin/check-in', { ref: farRef }, admin.token)).data.error?.code === 'NOT_OPEN_YET', 'check-in only opens shortly before the event');
+    const race = await Promise.all([1, 2].map(() => call('POST', '/api/admin/check-in', { ref: refs[1].booking_ref }, admin.token)));
+    ok(race.filter((r) => r.status === 201).length === 1 && race.filter((r) => r.data.error?.code === 'ALREADY_CHECKED_IN').length === 1, 'two scanners at once: exactly one check-in counts');
+    const list = (await call('GET', `/api/bookings?event_id=${D.event_id}&attended=1`, null, admin.token)).data;
+    ok(list.meta.total === 2 && list.bookings.every((b) => /Z$/.test(b.checked_in_at)), 'bookings can be filtered to who attended (with the time)');
+    ok((await call('GET', `/api/bookings?event_id=${D.event_id}&attended=0`, null, admin.token)).data.meta.total === 1, 'and to who has not arrived');
+    ok((await call('DELETE', `/api/bookings/${refs[0].booking_id}`, null, g[0].token)).data.error?.code === 'ALREADY_USED', 'a used ticket cannot be cancelled by its owner');
+    ok((await call('GET', '/api/admin/check-in/events', null, admin.token)).data.events.some((e) => e.event_id === D.event_id && e.checked_in === 2), 'the door screen lists events open for check-in with counts');
+    ok((await call('GET', `/api/events/${D.event_id}`, null, admin.token)).data.event.checked_in === 2
+      && !('checked_in' in (await call('GET', `/api/events/${D.event_id}`, null, g[2].token)).data.event), 'attendance numbers are shown to admins only');
+    const undo = await call('DELETE', `/api/admin/check-in/${refs[1].booking_id}`, null, admin.token);
+    ok(undo.status === 200 && undo.data.counts.checked_in === 1, 'a mistaken check-in can be undone');
+    const acts = (await call('GET', `/api/admin/audit-logs?action=CHECK_IN,CHECK_IN_UNDO&search=${encodeURIComponent(stamp)}`, null, admin.token)).data;
+    ok(acts.logs.some((l) => l.action === 'CHECK_IN') && acts.logs.some((l) => l.action === 'CHECK_IN_UNDO'), 'check-ins and undos are audited');
+    const rep = (await call('GET', '/api/admin/reports/bookings?format=json&event_id=' + D.event_id, null, admin.token)).data;
+    ok(rep.columns.some((c) => c.key === 'attended') && rep.rows.filter((r) => r.attended === 'Yes').length === 1, 'the bookings report has an Attended column');
+    const evRep = (await call('GET', '/api/admin/reports/events?format=json', null, admin.token)).data;
+    ok(evRep.columns.some((c) => c.key === 'no_show') && evRep.rows.find((r) => r.title === `Door ${stamp}`)?.attended === 1, 'the events report shows attended and no-shows');
+    const st = (await call('GET', '/api/admin/stats', null, admin.token)).data.totals;
+    ok(Number.isFinite(st.recent_booked) && Number.isFinite(st.recent_attended), 'the dashboard has attendance for recent events');
+    for (const e of [D, far]) await call('DELETE', `/api/events/${e.event_id}`, null, admin.token);
+  } else console.log('SKIP  check-in checks (event window would cross midnight in Nairobi)');
+}
+
+// --- edit your own profile
+{
+  const p1 = await mkUser('p1', comp);
+  const r1 = await call('PATCH', '/api/account/profile', { full_name: '  Jane   Wanjiru  ' }, p1.token);
+  ok(r1.status === 200 && r1.data.changed.join() === 'full_name' && (await call('GET', '/api/auth/me', null, p1.token)).data.user.full_name === 'Jane Wanjiru',
+    'a person can fix their name (spaces tidied) without the password');
+  ok((await call('PATCH', '/api/account/profile', { full_name: 'J' }, p1.token)).data.error?.field === 'full_name', 'names are still validated');
+  ok((await call('PATCH', '/api/account/profile', { student_number: `NEW${stamp}` }, p1.token)).data.error?.code === 'WRONG_PASSWORD', 'changing the student number needs the password');
+  ok((await call('PATCH', '/api/account/profile', { student_number: `new${stamp}`, password: 'Passw0rd1' }, p1.token)).data.changed?.includes('student_number'), 'with the password the student number can change (upper-cased)');
+  ok((await call('PATCH', '/api/account/profile', { student_number: `T${stamp}2`, password: 'Passw0rd1' }, p1.token)).data.error?.code === 'DUPLICATE_ACCOUNT', "another person's student number is refused");
+  ok((await call('PATCH', '/api/account/profile', { school_id: law, password: 'Passw0rd1' }, p1.token)).data.changed?.includes('school_id'), 'school can change when nothing is booked');
+  const e2 = (await call('POST', '/api/events', mk({ title: `Prof ${stamp}`, school_ids: [law] }), admin.token)).data.event;
+  await book({ ...p1, creds: { full_name: 'Jane Wanjiru', student_number: `NEW${stamp}`, school_id: law } }, e2.event_id);
+  ok((await call('PATCH', '/api/account/profile', { school_id: comp, password: 'Passw0rd1' }, p1.token)).data.error?.code === 'HAS_UPCOMING_BOOKINGS', 'school cannot change while holding upcoming bookings');
+  const au = (await call('GET', `/api/admin/audit-logs?action=PROFILE_UPDATE&entity_id=${p1.user.user_id}&limit=10`, null, admin.token)).data.logs;
+  ok(au.length === 3 && au.some((l) => l.before?.school_id === comp && l.after?.school_id === law), 'profile changes are audited with before and after');
+  await call('DELETE', `/api/events/${e2.event_id}`, null, admin.token);
+}
+
 // --- operations: health, readiness, request ids, config validation
 const h = await call('GET', '/api/health');
 ok(h.status === 200 && h.data.db?.ok === true && typeof h.data.db.latency_ms === 'number', 'health reports database ok with latency');
