@@ -6,6 +6,7 @@ import { AppError, asyncHandler } from '../utils/errors.js';
 import * as v from '../utils/validate.js';
 import { audit } from '../utils/audit.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { revokeUserSessions } from '../sessions.js';
 import { buildReport, toCsv } from '../utils/pdf.js';
 import { isoFields, localDayRangeUtc, localToday, offsetString, sqlToLocal } from '../utils/time.js';
 
@@ -62,6 +63,7 @@ router.patch('/users/:id', asyncHandler(async (req, res) => {
   const [u] = await query('SELECT email FROM users WHERE user_id = ?', [id]);
   if (!u) throw new AppError(404, 'NOT_FOUND', 'User not found.');
   await query('UPDATE users SET role = ? WHERE user_id = ?', [role, id]);
+  await revokeUserSessions(id); // the person logs in again under the new role
   await audit(req.user.user_id, 'CHANGE_ROLE', `${u.email} is now ${role}`);
   res.json({ ok: true });
 }));
@@ -73,6 +75,7 @@ router.post('/users/:id/reset-password', asyncHandler(async (req, res) => {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
   const temp = Array.from(crypto.randomBytes(10), (b) => alphabet[b % alphabet.length]).join('') + '7a';
   await query('UPDATE users SET password_hash = ? WHERE user_id = ?', [await bcrypt.hash(temp, 12), id]);
+  await revokeUserSessions(id); // whoever was logged in with the old password is logged out
   await audit(req.user.user_id, 'ADMIN_RESET_PASSWORD', `Reset password for ${u.email}`);
   res.json({ temporary_password: temp });
 }));

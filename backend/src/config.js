@@ -49,8 +49,10 @@ export const config = {
   appUrl: read('APP_URL', { prodRequired: true, url: true, def: 'http://localhost:4000', hint: 'Set it to the public site address, e.g. https://campusseat.onrender.com' }),
   // Frontend dev server origin (Vite). Only used outside production.
   clientOrigin: read('CLIENT_ORIGIN', { def: 'http://localhost:5173', url: true }),
-  jwtSecret: read('JWT_SECRET', { required: true, minLength: 32, hint: SECRET_HINT }),
-  jwtExpiresIn: read('JWT_EXPIRES_IN', { def: '8h' }),
+  // Login sessions (httpOnly cookie). Secure cookies are mandatory in production (HTTPS).
+  cookieSecure: read('COOKIE_SECURE', { def: isProd ? 'true' : 'false', oneOf: ['true', 'false'] }) === 'true',
+  sessionIdleMinutes: read('SESSION_IDLE_MINUTES', { def: 120, int: true, min: 5, max: 7 * 24 * 60 }),
+  sessionMaxDays: read('SESSION_MAX_DAYS', { def: 7, int: true, min: 1, max: 90 }),
   // Raises every rate limit by this factor. Only for automated tests: refused in production.
   rateLimitScale: read('RATE_LIMIT_SCALE', { def: 1, int: true, min: 1, max: 1000 }),
 };
@@ -63,6 +65,7 @@ read('DB_NAME', { prodRequired: true });
 read('DB_PORT', { int: true, min: 1, max: 65535 });
 read('DB_SSL', { oneOf: ['true', 'false'] });
 
+if (isProd && !config.cookieSecure) problems.push('COOKIE_SECURE must not be false in production (session cookies need HTTPS).');
 if (isProd && config.rateLimitScale !== 1) problems.push('RATE_LIMIT_SCALE must not be set in production (it weakens the login rate limits).');
 
 if (problems.length) {

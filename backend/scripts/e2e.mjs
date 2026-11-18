@@ -3,16 +3,35 @@
 const BASE = process.env.BASE_URL || 'http://localhost:4000';
 let pass = 0, failed = 0;
 const ok = (cond, name, extra = '') => { cond ? pass++ : failed++; console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${cond ? '' : '  ' + extra}`); };
-const call = async (method, path, body, token, extraHeaders = {}) => {
-  const res = await fetch(BASE + path, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extraHeaders }, body: body ? JSON.stringify(body) : undefined });
+// Each logged-in test user is a "session": its own cookie jar (the httpOnly session cookie) plus the
+// CSRF token from the login response. Passing one as `who` sends the cookie, and the CSRF header on
+// unsafe methods, like the browser app does.
+const SESSION_COOKIE = 'cs_sid';
+const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const readSetCookie = (res) => {
+  const c = res.headers.getSetCookie().find((h) => h.startsWith(`${SESSION_COOKIE}=`));
+  return c === undefined ? undefined : { raw: c, value: decodeURIComponent(c.split(';')[0].slice(SESSION_COOKIE.length + 1)) };
+};
+const sessionFrom = (r) => ({ cookie: readSetCookie(r.raw)?.value || '', csrf: r.data?.csrf_token || '' });
+const call = async (method, path, body, who, extraHeaders = {}) => {
+  const headers = { 'Content-Type': 'application/json' };
+  if (who?.cookie) headers.Cookie = `${SESSION_COOKIE}=${encodeURIComponent(who.cookie)}`;
+  if (who?.csrf && UNSAFE.has(method)) headers['X-CSRF-Token'] = who.csrf;
+  const res = await fetch(BASE + path, { method, headers: { ...headers, ...extraHeaders }, body: body ? JSON.stringify(body) : undefined });
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('json') ? await res.json() : Buffer.from(await res.arrayBuffer());
-  return { status: res.status, data, ct, headers: res.headers };
+  const sc = readSetCookie(res);
+  if (who && sc) who.cookie = sc.value; // the server replaced or cleared the cookie
+  return { status: res.status, data, ct, headers: res.headers, raw: res };
+};
+const login = async (email, password) => {
+  const r = await call('POST', '/api/auth/login', { email, password });
+  return { ...r.data, token: sessionFrom(r), res: r };
 };
 const stamp = Date.now().toString(36);
 const mkUser = async (i, school_id) => {
   const r = await call('POST', '/api/auth/register', { full_name: `Test User ${i}`, student_number: `T${stamp}${i}`, email: `t${stamp}${i}@test.local`, password: 'Passw0rd1', school_id });
-  return { ...r.data, creds: { full_name: `Test User ${i}`, student_number: `T${stamp}${i}`, school_id }, res: r };
+  return { ...r.data, token: sessionFrom(r), creds: { full_name: `Test User ${i}`, student_number: `T${stamp}${i}`, school_id }, res: r };
 };
 
 const schools = (await call('GET', '/api/schools')).data.schools;
@@ -20,7 +39,7 @@ const comp = schools.find((s) => /Computing/.test(s.school_name)).school_id;
 const law = schools.find((s) => /Law/.test(s.school_name)).school_id;
 
 // --- auth
-const admin = (await call('POST', '/api/auth/login', { email: 'admin@campusseat.local', password: 'Admin@12345' })).data;
+const admin = await login('admin@campusseat.local', 'Admin@12345');
 ok(admin.user?.role === 'admin', 'admin can log in');
 ok((await call('POST', '/api/auth/login', { email: 'admin@campusseat.local', password: 'wrong' })).status === 401, 'wrong password rejected (401)');
 ok((await call('POST', '/api/auth/login', { email: "' OR 1=1 --", password: 'x' })).status === 400, 'SQL-injection style email rejected');
@@ -35,6 +54,70 @@ ok((await call('POST', '/api/auth/register', { full_name: 'X Y', student_number:
 ok((await call('GET', '/api/admin/stats', null, u1.token)).status === 403, 'normal user blocked from admin API (403)');
 ok((await call('GET', '/api/admin/stats')).status === 401, 'anonymous blocked from admin API (401)');
 ok((await call('GET', '/api/auth/me', null, u1.token)).data.user.email === `t${stamp}1@test.local`, '/me returns the logged-in user');
+
+// --- sessions and CSRF
+{
+  const sc = readSetCookie(admin.res.raw)?.raw || '';
+  ok(admin.token.cookie.length >= 40 && !('token' in admin.res.data) && admin.res.data.csrf_token?.length === 64, 'login sets a session cookie and returns no token in the body');
+  ok(/HttpOnly/i.test(sc) && /SameSite=Lax/i.test(sc) && /Path=\//i.test(sc) && /Max-Age=\d+/i.test(sc), 'session cookie is HttpOnly, SameSite=Lax, Path=/', sc);
+  ok((await call('GET', '/api/auth/me', null, null, { Authorization: `Bearer ${admin.token.cookie}` })).status === 401, 'Authorization: Bearer is not accepted (cookie only)');
+  const anon = await call('GET', '/api/auth/session');
+  ok(anon.status === 200 && anon.data.user === null, 'anonymous /auth/session returns user: null');
+  const sess = await call('GET', '/api/auth/session', null, admin.token);
+  ok(sess.data.user?.role === 'admin' && sess.data.csrf_token === admin.token.csrf, '/auth/session returns the user and CSRF token');
+
+  const pwCheck = (who, headers) => call('POST', '/api/auth/change-password', { current_password: 'not-it', new_password: 'Whatever123' }, who, headers);
+  ok((await pwCheck({ cookie: u1.token.cookie })).data.error?.code === 'CSRF_FAILED', 'unsafe request without CSRF token is refused (403)');
+  ok((await pwCheck({ cookie: u1.token.cookie, csrf: 'f'.repeat(64) })).data.error?.code === 'CSRF_FAILED', 'unsafe request with a wrong CSRF token is refused');
+  ok((await pwCheck(u1.token, { Origin: 'https://evil.example' })).data.error?.code === 'CSRF_FAILED', 'request from a foreign Origin is refused even with the token');
+  ok((await pwCheck(u1.token, { Referer: 'https://evil.example/page' })).data.error?.code === 'CSRF_FAILED', 'foreign Referer (no Origin) is refused');
+  ok((await pwCheck(u1.token, { Origin: BASE })).data.error?.code === 'WRONG_PASSWORD', 'same-origin request with the token passes the CSRF checks');
+  ok((await call('POST', '/api/auth/login', { email: 'admin@campusseat.local', password: 'Admin@12345' }, null, { Origin: 'https://evil.example' })).status === 403, 'login from a foreign site is refused (login CSRF)');
+  ok((await call('GET', '/api/events', null, { cookie: u1.token.cookie }, { Origin: 'https://evil.example' })).status === 200, 'safe GET requests are not blocked');
+
+  // logout really ends the session; other devices stay logged in until "log out everywhere"
+  const email1 = `t${stamp}1@test.local`;
+  const a = (await login(email1, 'Passw0rd1')).token; const b = (await login(email1, 'Passw0rd1')).token;
+  const stale = { cookie: a.cookie }; // an attacker's copy of the cookie
+  const out = await call('POST', '/api/auth/logout', null, a);
+  ok(out.status === 200 && a.cookie === '', 'logout clears the cookie');
+  ok((await call('GET', '/api/auth/me', null, stale)).data.error?.code === 'SESSION_EXPIRED', 'a logged-out session cookie no longer works (replay refused)');
+  ok((await call('GET', '/api/auth/me', null, b)).status === 200, 'logging out one device leaves the others logged in');
+  const all = await call('POST', '/api/auth/logout-all', null, b);
+  ok(all.data.ended >= 2 && (await call('GET', '/api/auth/me', null, u1.token)).status === 401, 'log out everywhere ends every session of the account');
+
+  // password change logs out other devices but keeps this one
+  const c = (await login(email1, 'Passw0rd1')).token; const d = (await login(email1, 'Passw0rd1')).token;
+  const chg = await call('POST', '/api/auth/change-password', { current_password: 'Passw0rd1', new_password: 'Passw0rd2' }, c);
+  ok(chg.status === 200 && chg.data.other_sessions_ended >= 1, 'password change succeeds and ends other sessions', JSON.stringify(chg.data));
+  ok((await call('GET', '/api/auth/me', null, d)).status === 401 && (await call('GET', '/api/auth/me', null, c)).status === 200, 'other device is logged out, current one stays in');
+  u1.token = c;
+
+  // idle expiry and sliding renewal, checked against the database directly
+  if (process.env.E2E_DB !== '0') {
+    const mysql = (await import('mysql2/promise')).default;
+    const { dbConfig } = await import('../src/db-config.js');
+    const db = await mysql.createConnection({ ...dbConfig, timezone: 'Z' });
+    await db.query("SET time_zone = '+00:00'");
+    const { createHash } = await import('node:crypto');
+    const h = (t) => createHash('sha256').update(t.cookie).digest('hex');
+    const [[row]] = await db.query('SELECT token_hash, ip, user_agent FROM sessions WHERE token_hash = ?', [h(c)]);
+    ok(row && row.token_hash !== c.cookie, 'database stores only a hash of the session token');
+    const e = (await login(email1, 'Passw0rd2')).token;
+    await db.query('UPDATE sessions SET last_seen_at = UTC_TIMESTAMP() - INTERVAL 10 MINUTE, idle_expires_at = UTC_TIMESTAMP() + INTERVAL 1 MINUTE WHERE token_hash = ?', [h(e)]);
+    await call('GET', '/api/auth/me', null, e);
+    await new Promise((r) => setTimeout(r, 300));
+    const [[slid]] = await db.query('SELECT TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(), idle_expires_at) AS m FROM sessions WHERE token_hash = ?', [h(e)]);
+    ok(Number(slid.m) > 60, 'using a session slides its idle expiry forward', String(slid.m));
+    await db.query('UPDATE sessions SET idle_expires_at = UTC_TIMESTAMP() - INTERVAL 1 MINUTE WHERE token_hash = ?', [h(e)]);
+    const idle = await call('GET', '/api/auth/me', null, e);
+    ok(idle.data.error?.code === 'SESSION_EXPIRED' && e.cookie === '', 'idle session expires and the cookie is cleared');
+    const f = (await login(email1, 'Passw0rd2')).token;
+    await db.query('UPDATE sessions SET absolute_expires_at = UTC_TIMESTAMP() - INTERVAL 1 SECOND WHERE token_hash = ?', [h(f)]);
+    ok((await call('GET', '/api/auth/me', null, f)).status === 401, 'session past its absolute lifetime is refused even if recently used');
+    await db.end();
+  }
+}
 
 // --- events (admin CRUD)
 const future = new Date(Date.now() + 9 * 864e5).toLocaleDateString('en-CA');
@@ -89,7 +172,10 @@ const logs = (await call('GET', '/api/admin/audit-logs?action=BOOK_SEAT', null, 
 ok(logs.total >= 5 && logs.logs[0].full_name, 'audit log records who booked');
 const reset = await call('POST', `/api/admin/users/${u2.user.user_id}/reset-password`, null, admin.token);
 ok(/.{10,}/.test(reset.data.temporary_password || ''), 'admin resets a password');
-ok((await call('POST', '/api/auth/login', { email: `t${stamp}2@test.local`, password: reset.data.temporary_password })).status === 200, 'user logs in with temporary password');
+ok((await call('GET', '/api/auth/me', null, u2.token)).status === 401, "admin password reset logs the user out everywhere");
+const u2again = await login(`t${stamp}2@test.local`, reset.data.temporary_password);
+ok(u2again.res.status === 200, 'user logs in with temporary password');
+u2.token = u2again.token;
 const fp = await call('POST', '/api/auth/forgot-password', { email: `t${stamp}2@test.local`, student_number: u2.creds.student_number, new_password: 'NewPass123' });
 ok(fp.status === 200, 'forgot password with email + student number');
 ok((await call('POST', '/api/auth/forgot-password', { email: `t${stamp}2@test.local`, student_number: 'wrong', new_password: 'NewPass123' })).status === 404, 'forgot password rejects wrong student number');
@@ -153,9 +239,9 @@ ok(nf.status === 404 && nf.data.error.request_id === nf.headers.get('x-request-i
 {
   const { spawnSync } = await import('node:child_process');
   const r = spawnSync(process.execPath, ['-e', "import('./src/config.js')"], {
-    env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, NODE_ENV: 'production', DOTENV_CONFIG_PATH: 'none.env', JWT_SECRET: 'short', RATE_LIMIT_SCALE: '50' }, encoding: 'utf8' });
+    env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, NODE_ENV: 'production', DOTENV_CONFIG_PATH: 'none.env', COOKIE_SECURE: 'false', RATE_LIMIT_SCALE: '50' }, encoding: 'utf8' });
   const msg = r.stderr || '';
-  ok(r.status === 1 && /JWT_SECRET must be at least 32/.test(msg) && /DB_PASSWORD is missing/.test(msg) && /APP_URL is missing/.test(msg) && /RATE_LIMIT_SCALE must not be set/.test(msg),
+  ok(r.status === 1 && /COOKIE_SECURE must not be false/.test(msg) && /DB_PASSWORD is missing/.test(msg) && /APP_URL is missing/.test(msg) && /RATE_LIMIT_SCALE must not be set/.test(msg),
     'invalid production config is refused at startup with every problem listed', msg.slice(0, 300));
 }
 

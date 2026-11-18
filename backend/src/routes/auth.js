@@ -5,7 +5,8 @@ import { query, pool } from '../db.js';
 import { AppError, asyncHandler } from '../utils/errors.js';
 import * as v from '../utils/validate.js';
 import { audit } from '../utils/audit.js';
-import { requireAuth, signToken } from '../middleware/auth.js';
+import { requireAuth } from '../middleware/auth.js';
+import { clearSessionCookie, loadSession, revokeSession, revokeUserSessions, startSession } from '../sessions.js';
 import { config } from '../config.js';
 
 const router = Router();
@@ -52,7 +53,8 @@ router.post('/register', registerLimiter, asyncHandler(async (req, res) => {
   }
   await audit(id, 'REGISTER', `New account ${email}`);
   const user = await loadFull(id);
-  res.status(201).json({ token: signToken(user), user: publicUser(user) });
+  const csrf_token = await startSession(res, id, req);
+  res.status(201).json({ user: publicUser(user), csrf_token });
 }));
 
 router.post('/login', loginLimiter, asyncHandler(async (req, res) => {
@@ -66,16 +68,38 @@ router.post('/login', loginLimiter, asyncHandler(async (req, res) => {
     throw new AppError(401, 'INVALID_CREDENTIALS', 'Incorrect email or password.');
   }
   await audit(user.user_id, 'LOGIN');
-  res.json({ token: signToken(user), user: publicUser(user) });
+  // Logging in from a browser that still holds another session ends that one first.
+  const previous = await loadSession(req);
+  if (previous?.session) await revokeSession(previous.session.hash);
+  const csrf_token = await startSession(res, user.user_id, req);
+  res.json({ user: publicUser(user), csrf_token });
 }));
 
 router.post('/logout', requireAuth, asyncHandler(async (req, res) => {
+  await revokeSession(req.session.hash);
+  clearSessionCookie(res);
   await audit(req.user.user_id, 'LOGOUT');
   res.json({ ok: true });
 }));
 
+// Ends every session of this account, on every device.
+router.post('/logout-all', requireAuth, asyncHandler(async (req, res) => {
+  const n = await revokeUserSessions(req.user.user_id);
+  clearSessionCookie(res);
+  await audit(req.user.user_id, 'LOGOUT_ALL', `Ended ${n} session(s)`);
+  res.json({ ok: true, ended: n });
+}));
+
 router.get('/me', requireAuth, asyncHandler(async (req, res) => {
-  res.json({ user: publicUser(await loadFull(req.user.user_id)) });
+  res.json({ user: publicUser(await loadFull(req.user.user_id)), csrf_token: req.session.csrf });
+}));
+
+// For the page on load: who is logged in (if anyone) and the CSRF token. Always 200.
+router.get('/session', asyncHandler(async (req, res) => {
+  const s = await loadSession(req);
+  if (s?.expired) clearSessionCookie(res);
+  if (!s?.user) return res.json({ user: null });
+  res.json({ user: publicUser(await loadFull(s.user.user_id)), csrf_token: s.session.csrf });
 }));
 
 // Forgot password: the person proves who they are with the email AND student number on the account.
@@ -96,8 +120,9 @@ router.post('/change-password', requireAuth, asyncHandler(async (req, res) => {
     throw new AppError(400, 'WRONG_PASSWORD', 'Your current password is incorrect.', { field: 'current_password' });
   const pw = v.password(req.body?.new_password, 'new_password');
   await query('UPDATE users SET password_hash = ? WHERE user_id = ?', [await bcrypt.hash(pw, 12), req.user.user_id]);
-  await audit(req.user.user_id, 'PASSWORD_CHANGE');
-  res.json({ ok: true });
+  const ended = await revokeUserSessions(req.user.user_id, { except: req.session.hash }); // other devices are logged out
+  await audit(req.user.user_id, 'PASSWORD_CHANGE', ended ? `Ended ${ended} other session(s)` : null);
+  res.json({ ok: true, other_sessions_ended: ended });
 }));
 
 export default router;
