@@ -47,7 +47,8 @@ export async function buildCard(res, b, filename) {
   for (const [k, v] of rows) {
     doc.font('Helvetica').fontSize(8.5).fillColor('#6b7686').text(k.toUpperCase(), 28, y, { characterSpacing: 0.8 });
     doc.font('Helvetica-Bold').fontSize(11.5).fillColor('#1a1f29').text(String(v), 150, y - 2, { width: W - 340 });
-    y += 26;
+    // Long values (school names) wrap: move down by what was actually drawn, not a fixed step.
+    y += Math.max(26, doc.heightOfString(String(v), { width: W - 340 }) + 12);
   }
 
   const qr = await QRCode.toBuffer(b.booking_ref, { margin: 1, width: 220 });
