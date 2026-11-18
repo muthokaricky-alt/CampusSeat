@@ -1,14 +1,13 @@
 import mysql from 'mysql2/promise';
-import { config } from './config.js';
+import { dbConfig } from './db-config.js';
 
 // All queries use placeholders (?) via pool.execute(), i.e. prepared statements,
 // so user input never gets concatenated into SQL (protects against SQL injection).
 export const pool = mysql.createPool({
-  ...config.db,
+  ...dbConfig,
   waitForConnections: true,
   connectionLimit: 10,
   dateStrings: true, // keep DATE/TIME/DATETIME as plain strings (no timezone surprises)
-  charset: 'utf8mb4',
 });
 
 // Hosted MySQL (e.g. Aiven) runs on UTC. Make every connection use Kenyan time (UTC+3)
