@@ -36,7 +36,7 @@ export default function AuditLogs() {
               <tr key={l.log_id}><td style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(l.logged_at)}</td><td>{l.full_name || <span className="muted">Unknown or removed user</span>}</td>
                 <td><span className={`badge ${/FAILED/.test(l.action) ? 'bad' : /DELETE|CANCEL/.test(l.action) ? 'warn' : 'info'}`}>{l.action}</span></td><td>{l.details}</td></tr>))}</tbody>
           </table></div>
-          <Pager page={data.page} total={data.total} limit={data.limit} onPage={setPage} />
+          <Pager page={data.meta.page} total={data.meta.total} limit={data.meta.limit} onPage={setPage} />
         </>
       )}
     </div>

@@ -1,3 +1,5 @@
+-- DEPRECATED: kept for reference only. The schema is now managed by numbered migrations in
+-- backend/migrations (run: cd backend && npm run migrate). This file is the pre-migration baseline.
 -- CampusSeat database schema (MySQL 8 / MariaDB 10.5+, InnoDB so foreign keys are enforced)
 -- Matches the Database Schema in docs/. Run: mysql -u root -p < database/schema.sql
 

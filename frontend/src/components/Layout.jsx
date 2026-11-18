@@ -38,7 +38,7 @@ export function TopBar() {
           <ThemeToggle />
           {user ? (
             <>
-              <span className="who">{user.full_name}</span>
+              <Link className="who" to="/account" title="Account and security">{user.full_name}</Link>
               <button className="btn secondary sm" onClick={out}><LogOut size={16} aria-hidden />Log out</button>
             </>
           ) : (

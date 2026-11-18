@@ -5,8 +5,9 @@ import { Spinner } from './components/ui.jsx';
 import Events from './pages/Events.jsx';
 import EventDetail from './pages/EventDetail.jsx';
 import MyBookings from './pages/MyBookings.jsx';
-import { Login, Register, ForgotPassword } from './pages/Auth.jsx';
+import { Login, Register, ForgotPassword, ResetPassword } from './pages/Auth.jsx';
 import Help from './pages/Help.jsx';
+import Security from './pages/Security.jsx';
 import Dashboard from './pages/admin/Dashboard.jsx';
 import AdminEvents from './pages/admin/AdminEvents.jsx';
 import AdminBookings from './pages/admin/AdminBookings.jsx';
@@ -33,8 +34,10 @@ export default function App() {
         <Route path="login" element={<Login />} />
         <Route path="register" element={<Register />} />
         <Route path="forgot-password" element={<ForgotPassword />} />
+        <Route path="reset-password" element={<ResetPassword />} />
         <Route path="help" element={<Help />} />
         <Route path="my-bookings" element={<Guard><MyBookings /></Guard>} />
+        <Route path="account" element={<Guard><Security /></Guard>} />
         <Route path="admin" element={<Guard admin><AdminLayout /></Guard>}>
           <Route index element={<Dashboard />} />
           <Route path="events" element={<AdminEvents />} />

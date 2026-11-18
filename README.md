@@ -27,13 +27,14 @@ Web system for reserving seats at university events. Students and staff browse e
 
 |  item | Where |
 | --- | --- |
-| Front-end, admin panel, database, both connected | [`frontend/`](frontend/), [`frontend/src/pages/admin/`](frontend/src/pages/admin/), [`database/schema.sql`](database/schema.sql) |
+| Front-end, admin panel, database, both connected | [`frontend/`](frontend/), [`frontend/src/pages/admin/`](frontend/src/pages/admin/), [`backend/migrations/`](backend/migrations/) |
 | Main transaction (booking) | [`backend/src/routes/bookings.js`](backend/src/routes/bookings.js): one transaction, locks the event row, checks duplicate, school eligibility and capacity |
-| Levels of access, login, logout, register, forgot password | [`backend/src/routes/auth.js`](backend/src/routes/auth.js), [`middleware/auth.js`](backend/src/middleware/auth.js); admin can also reset passwords |
+| Levels of access, login, logout, register, forgot password | [`backend/src/routes/auth.js`](backend/src/routes/auth.js), [`middleware/auth.js`](backend/src/middleware/auth.js): httpOnly cookie sessions, CSRF protection, emailed single-use reset links, optional two-factor login for admins |
+| Cancellation and waitlist | People cancel their own booking (until 2 hours before); full events have a waitlist and the first person in line gets a freed seat automatically ([`backend/src/seats.js`](backend/src/seats.js)) |
 | Add, edit, delete, browse and search | Events (admin), users, bookings; search and filters on events, bookings, users, logs |
 | Reports with date, name and filters | Admin > Reports: PDF and CSV, filter by date, event, school, sort |
 | Audit logs | Every login, booking, event change, reset and report is recorded with who and when |
-| Security | Hashed passwords, prepared statements, login rate limits, role checks on every admin route, security headers |
+| Security | Hashed passwords, prepared statements, login rate limits and account lockout, role checks on every admin route, strict security headers (CSP), secrets never logged |
 | Validation and error messages | Server rules in [`utils/validate.js`](backend/src/utils/validate.js); field-level messages in every form |
 | Help facilities | Help page in the app |
 | Registration card | PDF with QR code, plus on-screen card |
@@ -42,42 +43,54 @@ Web system for reserving seats at university events. Students and staff browse e
 
 Base URL: `https://campusseat.onrender.com/api` (locally `http://localhost:4000/api`).
 
-Endpoints marked **Public** can be opened straight in the browser. Everything else needs a login token, and admin routes need an admin account.
+Endpoints marked **Public** can be opened straight in the browser. The rest need a login session (an httpOnly cookie set by `/auth/login`). Requests that change something (POST, PUT, PATCH, DELETE) must also send the `X-CSRF-Token` header with the token returned by `/auth/login` or `/auth/session`; the web app does this for you.
+
+Lists return `{ <items>: [...], meta: { page, limit, total, pages, sort, dir } }` and accept `?page=&limit=` (max 100) `&sort=&dir=asc|desc`. Errors return `{ error: { code, message, field?, request_id } }`.
 
 | Method | Endpoint | Access | Purpose |
 | --- | --- | --- | --- |
-| GET | [`/health`](https://campusseat.onrender.com/api/health) | Public | Server check, returns `{"ok":true}` |
+| GET | [`/health`](https://campusseat.onrender.com/api/health) | Public | Liveness, includes a database check (503 if the database is down) |
+| GET | [`/ready`](https://campusseat.onrender.com/api/ready) | Public | Readiness: database reachable and migrations up to date |
 | GET | [`/schools`](https://campusseat.onrender.com/api/schools) | Public | List of schools for the register form |
-| GET | [`/events`](https://campusseat.onrender.com/api/events) | Public | Browse and search events |
-| GET | `/events/:id` | Public | One event with seats left |
-| POST | `/auth/register` | Public | Create an account |
-| POST | `/auth/login` | Public | Log in, returns a token |
-| POST | `/auth/forgot-password` | Public | Reset password with email and student/staff number |
-| POST | `/auth/logout` | Logged in | Log out |
+| GET | [`/events`](https://campusseat.onrender.com/api/events) | Public | Browse and search events (paginated, `sort=date|title|seats|created`) |
+| GET | `/events/:id` | Public | One event with seats left and waitlist length |
+| POST | `/auth/register` | Public | Create an account (starts a session) |
+| POST | `/auth/login` | Public | Log in; returns `{ mfa_required, challenge }` instead when two-factor is on |
+| POST | `/auth/2fa` | Public | Second login step: app code or backup code |
+| GET | `/auth/session` | Public | Who is logged in (or `null`) and the CSRF token |
+| POST | `/auth/forgot-password` | Public | Email a single-use reset link |
+| POST | `/auth/reset-password`, `/auth/reset-password/verify` | Public | Set a new password with the emailed token |
+| POST | `/auth/logout`, `/auth/logout-all` | Logged in | End this session, or every session of the account |
 | GET | `/auth/me` | Logged in | Current user |
-| POST | `/auth/change-password` | Logged in | Change own password |
+| POST | `/auth/change-password` | Logged in | Change own password (logs out other devices) |
+| GET, POST | `/account/2fa`, `/account/2fa/setup`, `/enable`, `/disable`, `/backup-codes` | Logged in (setup: admin) | Two-factor login settings |
 | POST | `/bookings` | Logged in | Book a seat |
-| GET | `/bookings/mine` | Logged in | My bookings |
+| GET | `/bookings/mine`, `/bookings/waitlist` | Logged in | My bookings, my waitlist places |
+| DELETE | `/bookings/:id` | Owner or admin | Cancel a booking (owner: until `CANCEL_CUTOFF_HOURS` before the start) |
+| POST, DELETE | `/events/:id/waitlist` | Logged in | Join or leave the waitlist of a full event |
 | GET | `/bookings/:id/card` | Logged in | Registration card (PDF with QR code) |
-| GET | `/bookings` | Admin | All bookings |
-| DELETE | `/bookings/:id` | Admin | Cancel a booking |
-| POST, PUT, DELETE | `/events`, `/events/:id` | Admin | Create, edit, delete events |
-| GET | `/admin/stats` | Admin | Dashboard numbers |
+| GET | `/bookings`, `/events/:id/waitlist` | Admin | All bookings, an event's waitlist |
+| POST, PUT, DELETE | `/events`, `/events/:id` | Admin | Create, edit, delete events (more capacity promotes waiting people) |
+| GET | `/admin/stats`, `/admin/event-options` | Admin | Dashboard numbers, event picker |
 | GET, PATCH, DELETE | `/admin/users`, `/admin/users/:id` | Admin | Manage users |
-| POST | `/admin/users/:id/reset-password` | Admin | Reset a user's password |
+| POST | `/admin/users/:id/send-reset-email`, `/reset-password`, `/unlock` | Admin | Email a reset link, set a temporary password, unlock a locked account |
 | GET | `/admin/audit-logs` | Admin | Audit log |
 | GET | `/admin/reports/:type` | Admin | PDF and CSV reports |
 
 ## Run it on Windows
 
-1. Install [Node.js](https://nodejs.org/) (LTS) and [MySQL Server 8](https://dev.mysql.com/downloads/mysql/). Remember the MySQL root password.
-2. Create the database and tables. In PowerShell, from the project folder:
+**Quickest: Docker.** With [Docker Desktop](https://www.docker.com/products/docker-desktop/) running:
 
 ```
-mysql -u root -p -e "source database/schema.sql"
+docker compose up --build
 ```
 
-3. Backend settings. Copy the example file and edit the values (use `root` and your MySQL password for `DB_USER` and `DB_PASSWORD`, and paste a long random string as `JWT_SECRET`):
+Open [http://localhost:8080](http://localhost:8080). This starts MySQL 8.4 and the app, applies the migrations and adds the demo data. Emails (reset links, waitlist news) are printed in `docker compose logs -f app`.
+
+**Without Docker:**
+
+1. Install [Node.js](https://nodejs.org/) 22 or newer and [MySQL Server 8](https://dev.mysql.com/downloads/mysql/). Create an empty database, e.g. `mysql -u root -p -e "CREATE DATABASE campusseat_db CHARACTER SET utf8mb4"`.
+2. Backend settings. Copy the example file and fill in the database values (every setting is explained in the file):
 
 ```
 cd backend
@@ -85,15 +98,16 @@ copy .env.example .env
 notepad .env
 ```
 
-4. Install, add starter data, and start the API:
+3. Install, create the tables, add starter data, and start the API:
 
 ```
 npm install
+npm run migrate
 npm run seed
 npm start
 ```
 
-5. In a second PowerShell window, build the frontend:
+4. In a second PowerShell window, build the frontend:
 
 ```
 cd frontend
@@ -101,27 +115,60 @@ npm install
 npm run build
 ```
 
-6. Open [http://localhost:4000](http://localhost:4000). The backend serves the built frontend.
+5. Open [http://localhost:4000](http://localhost:4000). The backend serves the built frontend.
 
-For development with live reload, run `npm run dev` in `frontend` and open [http://localhost:5173](http://localhost:5173).
+For development with live reload, run `npm run dev` in `frontend` and open [http://localhost:5173](http://localhost:5173). With `MAIL_DRIVER=console` (the default outside production) emails are printed in the API's terminal.
+
+### Database migrations
+
+The schema lives in numbered files in [`backend/migrations/`](backend/migrations/). `npm run migrate` applies the ones not yet applied and records them in `schema_migrations`; `npm run migrate -- status` lists them and `npm run migrate -- --dry-run` shows what would change. On a database created from the old `database/schema.sql`, the first migration is recognised as already applied.
 
 ### Starter data and demo accounts
 
 `npm run seed` adds the schools, sample events, an admin account (`admin@campusseat.local`) and a demo student (`student@campusseat.local`). Their passwords come from `SEED_ADMIN_PASSWORD` and `SEED_DEMO_PASSWORD` in `backend/.env`, so set your own before seeding. The seed skips accounts that already exist, so it is safe to run more than once.
 
-## Deployment
-Hosted on Render with an Aiven MySQL database. Set the `DB_*`, `DB_SSL=true`, `JWT_SECRET` and `NODE_ENV=production` variables on Render, and run `npm run seed` once against the database.
+## Deploying (Render + Aiven)
 
-## Tests
-
-With the API running and seeded:
+1. **Database.** Create a MySQL service on Aiven and copy its host, port, user, password and database name.
+2. **Back it up before migrating.** For an existing database, take a backup first (Aiven console > Backups, or `mysqldump`).
+3. **Migrate and seed from your computer.** Put the Aiven values in `backend/.env` with `DB_SSL=true` (and ideally `DB_SSL_CA`), then:
 
 ```
 cd backend
-npm test
+npm install
+npm run migrate -- --dry-run
+npm run migrate
+npm run seed
 ```
 
-47 checks cover login, access control, SQL injection attempts, event rules, booking rules, 25 simultaneous requests for 4 seats (exactly 4 succeed), PDFs, reports, audit logs and password reset.
+   Migration 002 moves all timestamps to UTC. On a database that already has data it needs `TZ_CUTOVER_UTC`: the UTC time the "Use Kenyan time zone for database connections" deploy went live (from the Render deploy history), e.g. `TZ_CUTOVER_UTC=2026-11-17T17:40:00Z`. The dry run shows how many rows it will change.
+4. **Web service.** Create a Render web service from this repo (or use the [`Dockerfile`](Dockerfile)). Build: install and build the frontend, install the backend. Start (root directory `backend`): `npm run migrate && npm start`, so new migrations apply on every deploy; ones already applied are skipped in about a second, and a lock stops two instances migrating at once. (On a paid Render plan you can use the pre-deploy command `npm run migrate` instead.) Set the health check path to `/api/ready`.
+5. **Environment variables on Render.** Render does not read your local `.env`. Required in production:
+
+| Variable | Value |
+| --- | --- |
+| `NODE_ENV` | `production` |
+| `APP_URL` | `https://campusseat.onrender.com` (your public address) |
+| `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, `DB_SSL=true` | From Aiven (`DB_SSL_CA` recommended) |
+| `TOTP_ENC_KEY` | 32 random bytes, base64: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`. Keep it stable. |
+| `MAIL_DRIVER`, `MAIL_FROM` | `resend` (works on Render's free tier) or `smtp`, and a sender on a domain verified with the provider |
+| `RESEND_API_KEY` or `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | Credentials for the chosen mail driver |
+
+Optional: `CANCEL_CUTOFF_HOURS` (2), `SESSION_IDLE_MINUTES` (120), `SESSION_MAX_DAYS` (7), `LOCKOUT_THRESHOLD` (5), `LOCKOUT_MINUTES` (15), `RESET_TOKEN_MINUTES` (30), `LOG_LEVEL` (info). The app refuses to start, listing every problem, if a required value is missing or unsafe. `JWT_SECRET` is no longer used and can be removed.
+
+## Tests
+
+The end-to-end tests need the API running against a **test database** (never the live one), with `NODE_ENV=test`, `MAIL_DRIVER=memory` (so tests can read the emails) and `RATE_LIMIT_SCALE=50`:
+
+```
+cd backend
+npm run migrate
+npm run seed
+npm start          # in one window, with the test settings above
+npm test           # in another
+```
+
+175 checks cover login, sessions and CSRF, account lockout, emailed password resets, two-factor login, access control, SQL injection attempts, event rules, time zones, booking rules, 25 simultaneous requests for 4 seats (exactly 4 succeed), cancellations and waitlist races, pagination, PDFs, reports, CSV formula injection, audit logs, health checks and startup configuration checks. GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs them on every push against a fresh MySQL 8.4.
 
 ## Folders
 
@@ -165,3 +212,9 @@ Screens 1 to 9 are in [`docs/mockups/`](docs/mockups/): [screen-1](docs/mockups/
 | Uthman Salyani | Backend |
 | Rick Kyalo | Documentation, diagrams and mockups |
 
+## Notes
+
+- Never commit `backend/.env` (or any `.env.*` file). It holds your database password and keys.
+- Login uses a server-side session in an httpOnly cookie; nothing secret is kept in `localStorage`. Logging out ends the session on the server.
+- Times are stored in UTC and shown in Africa/Nairobi time (EAT).
+- Registration always creates a normal user account. Admin accounts are created by the seed script or promoted by an existing admin, never through the sign-up form.

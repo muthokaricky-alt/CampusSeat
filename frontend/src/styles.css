@@ -282,3 +282,19 @@ code.k { background: var(--surface-2); border: 1px solid var(--line); border-rad
   .topbar, .side, .footer, .no-print, .toasts { display: none !important; }
   body { background: #fff; }
 }
+
+/* ---------- account and security ---------- */
+.page.narrow { max-width: 720px; }
+.page.narrow > section + section { margin-top: 1.25rem; }
+a.who { text-decoration: none; padding: 0.4rem 0.5rem; border-radius: var(--radius-sm); }
+a.who:hover { color: var(--ink); background: var(--surface-2); }
+.linklike { background: none; border: 0; padding: 0; font: inherit; color: var(--primary); text-decoration: underline; cursor: pointer; }
+.qr { display: block; background: #fff; padding: 8px; border-radius: var(--radius-sm); border: 1px solid var(--line); }
+.steps { margin: 0; padding-left: 1.2rem; }
+.backup-codes { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: 0.4rem 1rem; margin: 0; padding-left: 1.6rem; }
+.backup-codes code { font-size: 1.05rem; letter-spacing: 0.05em; }
+
+/* ---------- waitlist ---------- */
+.plain-list { list-style: none; margin: 0.5rem 0 0; padding: 0; }
+.plain-list li + li { margin-top: 0.4rem; }
+.big-num { font-family: var(--font-head); font-size: 1.6rem; }

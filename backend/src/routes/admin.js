@@ -6,14 +6,20 @@ import { AppError, asyncHandler } from '../utils/errors.js';
 import * as v from '../utils/validate.js';
 import { audit } from '../utils/audit.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { revokeUserSessions } from '../sessions.js';
+import { unlock } from '../lockout.js';
+import { issueReset } from '../passwordReset.js';
+import { listParams } from '../utils/list.js';
 import { buildReport, toCsv } from '../utils/pdf.js';
+import { isoFields, localDayRangeUtc, localToday, offsetString, sqlToLocal } from '../utils/time.js';
 
 const router = Router();
+const shiftDays = (ymd, n) => { const d = new Date(`${ymd}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
 router.use(requireAdmin);
 
 router.get('/stats', asyncHandler(async (_req, res) => {
   const [totals] = await query(`SELECT
-      (SELECT COUNT(*) FROM events WHERE TIMESTAMP(event_date, end_time) >= NOW()) AS upcoming_events,
+      (SELECT COUNT(*) FROM events WHERE ends_at >= UTC_TIMESTAMP()) AS upcoming_events,
       (SELECT COUNT(*) FROM bookings) AS total_bookings,
       (SELECT COUNT(*) FROM users) AS total_users,
       (SELECT COUNT(*) FROM events) AS total_events`);
@@ -21,18 +27,27 @@ router.get('/stats', asyncHandler(async (_req, res) => {
     SELECT e.event_id, e.title, e.event_date, e.capacity,
            (SELECT COUNT(*) FROM bookings b WHERE b.event_id = e.event_id) AS booked
     FROM events e
-    WHERE TIMESTAMP(e.event_date, e.end_time) >= NOW()
+    WHERE e.ends_at >= UTC_TIMESTAMP()
       AND (SELECT COUNT(*) FROM bookings b WHERE b.event_id = e.event_id) >= e.capacity * 0.8
     ORDER BY e.event_date LIMIT 10`);
   const recent = await query(`
     SELECT b.booking_id, b.booking_ref, b.booked_at, u.full_name, e.title
     FROM bookings b JOIN users u ON u.user_id = b.user_id JOIN events e ON e.event_id = b.event_id
     ORDER BY b.booked_at DESC, b.booking_id DESC LIMIT 8`);
+  // Bookings per Nairobi calendar day for the last 7 days.
+  const tz = offsetString();
+  const { start } = localDayRangeUtc(shiftDays(localToday(), -6), null);
   const perDay = await query(`
-    SELECT DATE(booked_at) AS day, COUNT(*) AS n FROM bookings
-    WHERE booked_at >= DATE_SUB(CURDATE(), INTERVAL 6 DAY) GROUP BY DATE(booked_at) ORDER BY day`);
+    SELECT DATE(CONVERT_TZ(booked_at, '+00:00', ?)) AS day, COUNT(*) AS n FROM bookings
+    WHERE booked_at >= ? GROUP BY day ORDER BY day`, [tz, start]);
   const num = (o) => Object.fromEntries(Object.entries(o).map(([k, x]) => [k, Number(x)]));
-  res.json({ totals: num(totals), almost_full: almostFull.map((r) => ({ ...r, booked: Number(r.booked) })), recent, per_day: perDay.map((r) => ({ day: r.day, n: Number(r.n) })) });
+  res.json({ totals: num(totals), almost_full: almostFull.map((r) => ({ ...r, booked: Number(r.booked) })), recent: recent.map((r) => isoFields(r)), per_day: perDay.map((r) => ({ day: r.day, n: Number(r.n) })) });
+}));
+
+/* ---------- Event picker for admin filters (id, title, date of every event, newest first) ---------- */
+router.get('/event-options', asyncHandler(async (_req, res) => {
+  const events = await query('SELECT event_id, title, event_date FROM events ORDER BY starts_at DESC, event_id DESC LIMIT 2000');
+  res.json({ events, meta: { page: 1, limit: 2000, total: events.length, pages: 1, sort: 'date', dir: 'desc' } });
 }));
 
 /* ---------- Users ---------- */
@@ -42,11 +57,20 @@ router.get('/users', asyncHandler(async (req, res) => {
     const p = v.likePattern(String(req.query.search).slice(0, 100));
     where = 'WHERE u.full_name LIKE ? OR u.email LIKE ? OR u.student_number LIKE ?'; params.push(p, p, p);
   }
+  const lp = listParams(req.query, {
+    sorts: { created: 'u.created_at', name: 'u.full_name', email: 'u.email', bookings: 'bookings', role: 'u.role' },
+    defaultSort: 'created', defaultDir: 'desc', tiebreak: 'u.user_id',
+  });
+  const [{ total }] = await query(`SELECT COUNT(*) AS total FROM users u ${where}`, params);
   const users = await query(`
     SELECT u.user_id, u.full_name, u.student_number, u.email, u.role, u.created_at, s.school_name,
+           IF(u.locked_until > UTC_TIMESTAMP(), u.locked_until, NULL) AS locked_until, (u.totp_enabled_at IS NOT NULL) AS two_factor,
            (SELECT COUNT(*) FROM bookings b WHERE b.user_id = u.user_id) AS bookings
-    FROM users u JOIN schools s ON s.school_id = u.school_id ${where} ORDER BY u.created_at DESC LIMIT 500`, params);
-  res.json({ users: users.map((u) => ({ ...u, bookings: Number(u.bookings) })) });
+    FROM users u JOIN schools s ON s.school_id = u.school_id ${where} ${lp.orderBy} ${lp.limitSql}`, params);
+  res.json({
+    users: users.map((u) => isoFields({ ...u, bookings: Number(u.bookings), two_factor: !!Number(u.two_factor) }, ['created_at', 'locked_until'])),
+    meta: lp.meta(total),
+  });
 }));
 
 router.patch('/users/:id', asyncHandler(async (req, res) => {
@@ -57,8 +81,29 @@ router.patch('/users/:id', asyncHandler(async (req, res) => {
   const [u] = await query('SELECT email FROM users WHERE user_id = ?', [id]);
   if (!u) throw new AppError(404, 'NOT_FOUND', 'User not found.');
   await query('UPDATE users SET role = ? WHERE user_id = ?', [role, id]);
+  await revokeUserSessions(id); // the person logs in again under the new role
   await audit(req.user.user_id, 'CHANGE_ROLE', `${u.email} is now ${role}`);
   res.json({ ok: true });
+}));
+
+router.post('/users/:id/unlock', asyncHandler(async (req, res) => {
+  const id = v.int(req.params.id, 'id');
+  const [u] = await query('SELECT email FROM users WHERE user_id = ?', [id]);
+  if (!u) throw new AppError(404, 'NOT_FOUND', 'User not found.');
+  await unlock(id);
+  await audit(req.user.user_id, 'ACCOUNT_UNLOCK', `Unlocked ${u.email}`);
+  res.json({ ok: true });
+}));
+
+// Preferred over a temporary password: the person picks their own via an emailed link.
+router.post('/users/:id/send-reset-email', asyncHandler(async (req, res) => {
+  const id = v.int(req.params.id, 'id');
+  const [u] = await query('SELECT user_id, full_name, email FROM users WHERE user_id = ?', [id]);
+  if (!u) throw new AppError(404, 'NOT_FOUND', 'User not found.');
+  const r = await issueReset(u, req.ip);
+  if (!r) throw new AppError(429, 'TOO_MANY_RESETS', 'A reset link was already sent 3 times in the last hour. Try again later.');
+  await audit(req.user.user_id, 'ADMIN_SEND_RESET', `Sent a password reset link to ${u.email}`);
+  res.json({ ok: true, sent: await r.sent });
 }));
 
 router.post('/users/:id/reset-password', asyncHandler(async (req, res) => {
@@ -68,6 +113,8 @@ router.post('/users/:id/reset-password', asyncHandler(async (req, res) => {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
   const temp = Array.from(crypto.randomBytes(10), (b) => alphabet[b % alphabet.length]).join('') + '7a';
   await query('UPDATE users SET password_hash = ? WHERE user_id = ?', [await bcrypt.hash(temp, 12), id]);
+  await revokeUserSessions(id); // whoever was logged in with the old password is logged out
+  await unlock(id);
   await audit(req.user.user_id, 'ADMIN_RESET_PASSWORD', `Reset password for ${u.email}`);
   res.json({ temporary_password: temp });
 }));
@@ -96,23 +143,23 @@ router.get('/audit-logs', asyncHandler(async (req, res) => {
     const p = v.likePattern(String(req.query.search).slice(0, 100));
     where.push('(u.full_name LIKE ? OR u.email LIKE ? OR a.details LIKE ?)'); params.push(p, p, p);
   }
-  if (req.query.from) { where.push('a.logged_at >= ?'); params.push(`${v.date(req.query.from, 'from')} 00:00:00`); }
-  if (req.query.to) { where.push('a.logged_at <= ?'); params.push(`${v.date(req.query.to, 'to')} 23:59:59`); }
-  const limit = Math.min(Number(req.query.limit) || 50, 200);
-  const page = Math.max(Number(req.query.page) || 1, 1);
+  // from/to are Nairobi calendar days; logged_at is UTC.
+  const range = localDayRangeUtc(req.query.from ? v.date(req.query.from, 'from') : null, req.query.to ? v.date(req.query.to, 'to') : null);
+  if (range.start) { where.push('a.logged_at >= ?'); params.push(range.start); }
+  if (range.end) { where.push('a.logged_at < ?'); params.push(range.end); }
+  const lp = listParams(req.query, { sorts: { time: 'a.logged_at', action: 'a.action' }, defaultSort: 'time', defaultDir: 'desc', tiebreak: 'a.log_id' });
   const base = `FROM audit_logs a LEFT JOIN users u ON u.user_id = a.user_id ${where.length ? 'WHERE ' + where.join(' AND ') : ''}`;
   const [{ total }] = await query(`SELECT COUNT(*) AS total ${base}`, params);
-  const logs = await query(
-    `SELECT a.log_id, a.action, a.details, a.logged_at, u.full_name, u.email ${base} ORDER BY a.logged_at DESC, a.log_id DESC LIMIT ${limit} OFFSET ${(page - 1) * limit}`, params);
+  const logs = await query(`SELECT a.log_id, a.action, a.details, a.logged_at, u.full_name, u.email ${base} ${lp.orderBy} ${lp.limitSql}`, params);
   const actions = (await query('SELECT DISTINCT action FROM audit_logs ORDER BY action')).map((r) => r.action);
-  res.json({ logs, total: Number(total), page, limit, actions });
+  res.json({ logs: logs.map((l) => isoFields(l)), meta: lp.meta(total), actions });
 }));
 
 /* ---------- Reports (PDF / CSV / JSON), with filtering and sorting ---------- */
 const BOOKING_COLS = [
   { key: 'booking_ref', label: 'Booking ref', w: 1.3 }, { key: 'full_name', label: 'Name', w: 1.6 },
   { key: 'student_number', label: 'Student no.', w: 1.1 }, { key: 'school_name', label: 'School', w: 1.8 },
-  { key: 'title', label: 'Event', w: 1.8 }, { key: 'event_date', label: 'Event date', w: 1.1 }, { key: 'booked_at', label: 'Booked at', w: 1.3 },
+  { key: 'title', label: 'Event', w: 1.8 }, { key: 'event_date', label: 'Event date', w: 1.1 }, { key: 'booked_at', label: 'Booked at (EAT)', w: 1.3 },
 ];
 const EVENT_COLS = [
   { key: 'title', label: 'Event', w: 2.2 }, { key: 'event_date', label: 'Date', w: 1 }, { key: 'venue', label: 'Venue', w: 1.5 },
@@ -141,13 +188,16 @@ router.get('/reports/:type', asyncHandler(async (req, res) => {
       const [e] = await query('SELECT title FROM events WHERE event_id = ?', [id]); filters.push(`Event: ${e ? e.title : '#' + id}`); }
     if (req.query.school_id) { const id = v.int(req.query.school_id, 'school_id'); where.push('u.school_id = ?'); params.push(id);
       const [s] = await query('SELECT school_name FROM schools WHERE school_id = ?', [id]); filters.push(`School: ${s ? s.school_name : '#' + id}`); }
-    if (from) { where.push('DATE(b.booked_at) >= ?'); params.push(from); }
-    if (to) { where.push('DATE(b.booked_at) <= ?'); params.push(to); }
+    const range = localDayRangeUtc(from, to); // Nairobi days -> UTC range
+    if (range.start) { where.push('b.booked_at >= ?'); params.push(range.start); }
+    if (range.end) { where.push('b.booked_at < ?'); params.push(range.end); }
     if (from || to) filters.push(`Booked between: ${from || 'start'} and ${to || 'today'}`);
     rows = await query(`
       SELECT b.booking_ref, u.full_name, u.student_number, s.school_name, e.title, e.event_date, b.booked_at
       FROM bookings b JOIN users u ON u.user_id = b.user_id JOIN schools s ON s.school_id = u.school_id JOIN events e ON e.event_id = b.event_id
       ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY ${sortCol} ${dir}, b.booking_id`, params);
+    // Reports are read by people: show booking times in Nairobi time (the JSON format keeps ISO UTC).
+    rows = rows.map((r) => ({ ...r, booked_at: format === 'json' ? isoFields({ booked_at: r.booked_at }).booked_at : sqlToLocal(r.booked_at) }));
     totals = [`Total bookings: ${rows.length}`];
   } else {
     columns = EVENT_COLS;
@@ -165,7 +215,7 @@ router.get('/reports/:type', asyncHandler(async (req, res) => {
     totals = [`Events: ${rows.length}`, `Seats booked: ${booked} of ${seats}${seats ? ` (${Math.round((booked / seats) * 100)}%)` : ''}`];
   }
   await audit(req.user.user_id, 'GENERATE_REPORT', `${type} report (${format})`);
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = localToday();
   const title = type === 'bookings' ? 'Bookings report' : 'Events summary report';
   if (format === 'pdf') return buildReport(res, { title, filters, columns, rows, totals, filename: `campusseat-${type}-${stamp}.pdf`, orientation: 'landscape' });
   if (format === 'csv') {

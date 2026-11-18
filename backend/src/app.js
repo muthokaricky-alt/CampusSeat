@@ -7,22 +7,36 @@ import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 import { AppError } from './utils/errors.js';
+import { httpLogger } from './logger.js';
+import { health, ready } from './health.js';
+import { originCheck } from './middleware/auth.js';
+import { sentTo } from './mail/index.js';
 import authRoutes from './routes/auth.js';
 import schoolRoutes from './routes/schools.js';
 import eventRoutes from './routes/events.js';
 import bookingRoutes from './routes/bookings.js';
 import adminRoutes from './routes/admin.js';
+import accountRoutes from './routes/account.js';
 
 export function createApp() {
   const app = express();
-  app.set('trust proxy', 1);
+  app.set('trust proxy', 1); // Render puts one proxy in front of the app
+  app.disable('x-powered-by');
+  app.use(httpLogger);
   app.use(helmet());
   if (!config.isProd) app.use(cors({ origin: config.clientOrigin }));
   app.use(express.json({ limit: '100kb' }));
+  app.use('/api', originCheck); // CSRF layer 1 (layer 2, the token, is checked with the session)
   app.use('/api', rateLimit({ windowMs: 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false }));
 
-  app.get('/api/health', (_req, res) => res.json({ ok: true }));
+  app.get('/api/health', health);
+  app.get('/api/ready', ready);
+  // Automated tests read the emails the app "sent". Only exists with NODE_ENV=test and MAIL_DRIVER=memory.
+  if (config.isTest && config.mail.driver === 'memory') {
+    app.get('/api/_test/mail', (req, res) => res.json({ messages: sentTo(String(req.query.to || '')) }));
+  }
   app.use('/api/auth', authRoutes);
+  app.use('/api/account', accountRoutes);
   app.use('/api/schools', schoolRoutes);
   app.use('/api/events', eventRoutes);
   app.use('/api/bookings', bookingRoutes);
@@ -41,11 +55,14 @@ export function createApp() {
   }
 
   // eslint-disable-next-line no-unused-vars
-  app.use((err, _req, res, _next) => {
-    if (err instanceof AppError) return res.status(err.status).json({ error: { code: err.code, message: err.message, ...err.extra } });
-    if (err.type === 'entity.parse.failed') return res.status(400).json({ error: { code: 'BAD_JSON', message: 'Request body is not valid JSON.' } });
-    console.error(err);
-    res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Something went wrong on our side. Please try again.' } });
+  // Every error has the same shape: { error: { code, message, field?, request_id } }.
+  app.use((err, req, res, _next) => {
+    const request_id = req.id;
+    if (err instanceof AppError) return res.status(err.status).json({ error: { code: err.code, message: err.message, ...err.extra, request_id } });
+    if (err.type === 'entity.parse.failed') return res.status(400).json({ error: { code: 'BAD_JSON', message: 'Request body is not valid JSON.', request_id } });
+    if (err.type === 'entity.too.large') return res.status(413).json({ error: { code: 'TOO_LARGE', message: 'Request body is too large.', request_id } });
+    req.log.error({ err }, 'unhandled error');
+    res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Something went wrong on our side. Please try again.', request_id } });
   });
   return app;
 }

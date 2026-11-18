@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci_root
+          MYSQL_DATABASE: campusseat_test
+          MYSQL_USER: campusseat
+          MYSQL_PASSWORD: ci_password
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci_root"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    env:
+      # Throwaway values for the CI database only; nothing here is a real secret.
+      NODE_ENV: test
+      PORT: 4000
+      APP_URL: http://localhost:4000
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_USER: campusseat
+      DB_PASSWORD: ci_password
+      DB_NAME: campusseat_test
+      MAIL_DRIVER: memory
+      RATE_LIMIT_SCALE: 50
+      LOG_LEVEL: warn
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Install
+        run: |
+          npm ci --prefix backend --no-fund
+          npm ci --prefix frontend --no-fund
+
+      - name: Audit production dependencies
+        run: npm audit --prefix backend --omit=dev --audit-level=high
+
+      - name: Generate a throwaway two-factor key
+        run: echo "TOTP_ENC_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")" >> "$GITHUB_ENV"
+
+      - name: Migrate and seed
+        working-directory: backend
+        run: |
+          npm run migrate
+          npm run migrate   # second run must be a no-op
+          npm run seed
+
+      - name: Start the API
+        working-directory: backend
+        run: |
+          node src/server.js > server.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:4000/api/ready > /dev/null && exit 0; sleep 1; done
+          echo "API did not become ready"; cat server.log; exit 1
+
+      - name: End-to-end tests
+        working-directory: backend
+        run: npm test
+
+      - name: Build the frontend
+        run: npm run build --prefix frontend
+
+      - name: Server log (on failure)
+        if: failure()
+        run: cat backend/server.log || true

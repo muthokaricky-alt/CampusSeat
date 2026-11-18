@@ -12,7 +12,7 @@ export default function Reports() {
   const [schools, setSchools] = useState([]);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
-  useEffect(() => { api.get('/events?past=1').then((r) => setEvents(r.events)); api.get('/schools').then((r) => setSchools(r.schools)); }, []);
+  useEffect(() => { api.get('/admin/event-options').then((r) => setEvents(r.events)).catch(() => {}); api.get('/schools').then((r) => setSchools(r.schools)); }, []);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const qs = (format) => {
     const p = new URLSearchParams({ format });

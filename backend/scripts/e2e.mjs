@@ -3,16 +3,35 @@
 const BASE = process.env.BASE_URL || 'http://localhost:4000';
 let pass = 0, failed = 0;
 const ok = (cond, name, extra = '') => { cond ? pass++ : failed++; console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${cond ? '' : '  ' + extra}`); };
-const call = async (method, path, body, token) => {
-  const res = await fetch(BASE + path, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: body ? JSON.stringify(body) : undefined });
+// Each logged-in test user is a "session": its own cookie jar (the httpOnly session cookie) plus the
+// CSRF token from the login response. Passing one as `who` sends the cookie, and the CSRF header on
+// unsafe methods, like the browser app does.
+const SESSION_COOKIE = 'cs_sid';
+const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const readSetCookie = (res) => {
+  const c = res.headers.getSetCookie().find((h) => h.startsWith(`${SESSION_COOKIE}=`));
+  return c === undefined ? undefined : { raw: c, value: decodeURIComponent(c.split(';')[0].slice(SESSION_COOKIE.length + 1)) };
+};
+const sessionFrom = (r) => ({ cookie: readSetCookie(r.raw)?.value || '', csrf: r.data?.csrf_token || '' });
+const call = async (method, path, body, who, extraHeaders = {}) => {
+  const headers = { 'Content-Type': 'application/json' };
+  if (who?.cookie) headers.Cookie = `${SESSION_COOKIE}=${encodeURIComponent(who.cookie)}`;
+  if (who?.csrf && UNSAFE.has(method)) headers['X-CSRF-Token'] = who.csrf;
+  const res = await fetch(BASE + path, { method, headers: { ...headers, ...extraHeaders }, body: body ? JSON.stringify(body) : undefined });
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('json') ? await res.json() : Buffer.from(await res.arrayBuffer());
-  return { status: res.status, data, ct };
+  const sc = readSetCookie(res);
+  if (who && sc) who.cookie = sc.value; // the server replaced or cleared the cookie
+  return { status: res.status, data, ct, headers: res.headers, raw: res };
+};
+const login = async (email, password) => {
+  const r = await call('POST', '/api/auth/login', { email, password });
+  return { ...r.data, token: sessionFrom(r), res: r };
 };
 const stamp = Date.now().toString(36);
 const mkUser = async (i, school_id) => {
   const r = await call('POST', '/api/auth/register', { full_name: `Test User ${i}`, student_number: `T${stamp}${i}`, email: `t${stamp}${i}@test.local`, password: 'Passw0rd1', school_id });
-  return { ...r.data, creds: { full_name: `Test User ${i}`, student_number: `T${stamp}${i}`, school_id }, res: r };
+  return { ...r.data, token: sessionFrom(r), creds: { full_name: `Test User ${i}`, student_number: `T${stamp}${i}`, school_id }, res: r };
 };
 
 const schools = (await call('GET', '/api/schools')).data.schools;
@@ -20,7 +39,7 @@ const comp = schools.find((s) => /Computing/.test(s.school_name)).school_id;
 const law = schools.find((s) => /Law/.test(s.school_name)).school_id;
 
 // --- auth
-const admin = (await call('POST', '/api/auth/login', { email: 'admin@campusseat.local', password: 'Admin@12345' })).data;
+const admin = await login('admin@campusseat.local', 'Admin@12345');
 ok(admin.user?.role === 'admin', 'admin can log in');
 ok((await call('POST', '/api/auth/login', { email: 'admin@campusseat.local', password: 'wrong' })).status === 401, 'wrong password rejected (401)');
 ok((await call('POST', '/api/auth/login', { email: "' OR 1=1 --", password: 'x' })).status === 400, 'SQL-injection style email rejected');
@@ -35,6 +54,164 @@ ok((await call('POST', '/api/auth/register', { full_name: 'X Y', student_number:
 ok((await call('GET', '/api/admin/stats', null, u1.token)).status === 403, 'normal user blocked from admin API (403)');
 ok((await call('GET', '/api/admin/stats')).status === 401, 'anonymous blocked from admin API (401)');
 ok((await call('GET', '/api/auth/me', null, u1.token)).data.user.email === `t${stamp}1@test.local`, '/me returns the logged-in user');
+
+// --- sessions and CSRF
+{
+  const sc = readSetCookie(admin.res.raw)?.raw || '';
+  ok(admin.token.cookie.length >= 40 && !('token' in admin.res.data) && admin.res.data.csrf_token?.length === 64, 'login sets a session cookie and returns no token in the body');
+  ok(/HttpOnly/i.test(sc) && /SameSite=Lax/i.test(sc) && /Path=\//i.test(sc) && /Max-Age=\d+/i.test(sc), 'session cookie is HttpOnly, SameSite=Lax, Path=/', sc);
+  ok((await call('GET', '/api/auth/me', null, null, { Authorization: `Bearer ${admin.token.cookie}` })).status === 401, 'Authorization: Bearer is not accepted (cookie only)');
+  const anon = await call('GET', '/api/auth/session');
+  ok(anon.status === 200 && anon.data.user === null, 'anonymous /auth/session returns user: null');
+  const sess = await call('GET', '/api/auth/session', null, admin.token);
+  ok(sess.data.user?.role === 'admin' && sess.data.csrf_token === admin.token.csrf, '/auth/session returns the user and CSRF token');
+
+  const pwCheck = (who, headers) => call('POST', '/api/auth/change-password', { current_password: 'not-it', new_password: 'Whatever123' }, who, headers);
+  ok((await pwCheck({ cookie: u1.token.cookie })).data.error?.code === 'CSRF_FAILED', 'unsafe request without CSRF token is refused (403)');
+  ok((await pwCheck({ cookie: u1.token.cookie, csrf: 'f'.repeat(64) })).data.error?.code === 'CSRF_FAILED', 'unsafe request with a wrong CSRF token is refused');
+  ok((await pwCheck(u1.token, { Origin: 'https://evil.example' })).data.error?.code === 'CSRF_FAILED', 'request from a foreign Origin is refused even with the token');
+  ok((await pwCheck(u1.token, { Referer: 'https://evil.example/page' })).data.error?.code === 'CSRF_FAILED', 'foreign Referer (no Origin) is refused');
+  ok((await pwCheck(u1.token, { Origin: BASE })).data.error?.code === 'WRONG_PASSWORD', 'same-origin request with the token passes the CSRF checks');
+  ok((await call('POST', '/api/auth/login', { email: 'admin@campusseat.local', password: 'Admin@12345' }, null, { Origin: 'https://evil.example' })).status === 403, 'login from a foreign site is refused (login CSRF)');
+  ok((await call('GET', '/api/events', null, { cookie: u1.token.cookie }, { Origin: 'https://evil.example' })).status === 200, 'safe GET requests are not blocked');
+
+  // logout really ends the session; other devices stay logged in until "log out everywhere"
+  const email1 = `t${stamp}1@test.local`;
+  const a = (await login(email1, 'Passw0rd1')).token; const b = (await login(email1, 'Passw0rd1')).token;
+  const stale = { cookie: a.cookie }; // an attacker's copy of the cookie
+  const out = await call('POST', '/api/auth/logout', null, a);
+  ok(out.status === 200 && a.cookie === '', 'logout clears the cookie');
+  ok((await call('GET', '/api/auth/me', null, stale)).data.error?.code === 'SESSION_EXPIRED', 'a logged-out session cookie no longer works (replay refused)');
+  ok((await call('GET', '/api/auth/me', null, b)).status === 200, 'logging out one device leaves the others logged in');
+  const all = await call('POST', '/api/auth/logout-all', null, b);
+  ok(all.data.ended >= 2 && (await call('GET', '/api/auth/me', null, u1.token)).status === 401, 'log out everywhere ends every session of the account');
+
+  // password change logs out other devices but keeps this one
+  const c = (await login(email1, 'Passw0rd1')).token; const d = (await login(email1, 'Passw0rd1')).token;
+  const chg = await call('POST', '/api/auth/change-password', { current_password: 'Passw0rd1', new_password: 'Passw0rd2' }, c);
+  ok(chg.status === 200 && chg.data.other_sessions_ended >= 1, 'password change succeeds and ends other sessions', JSON.stringify(chg.data));
+  ok((await call('GET', '/api/auth/me', null, d)).status === 401 && (await call('GET', '/api/auth/me', null, c)).status === 200, 'other device is logged out, current one stays in');
+  u1.token = c;
+
+  // idle expiry and sliding renewal, checked against the database directly
+  if (process.env.E2E_DB !== '0') {
+    const mysql = (await import('mysql2/promise')).default;
+    const { dbConfig } = await import('../src/db-config.js');
+    const db = await mysql.createConnection({ ...dbConfig, timezone: 'Z' });
+    await db.query("SET time_zone = '+00:00'");
+    const { createHash } = await import('node:crypto');
+    const h = (t) => createHash('sha256').update(t.cookie).digest('hex');
+    const [[row]] = await db.query('SELECT token_hash, ip, user_agent FROM sessions WHERE token_hash = ?', [h(c)]);
+    ok(row && row.token_hash !== c.cookie, 'database stores only a hash of the session token');
+    const e = (await login(email1, 'Passw0rd2')).token;
+    await db.query('UPDATE sessions SET last_seen_at = UTC_TIMESTAMP() - INTERVAL 10 MINUTE, idle_expires_at = UTC_TIMESTAMP() + INTERVAL 1 MINUTE WHERE token_hash = ?', [h(e)]);
+    await call('GET', '/api/auth/me', null, e);
+    await new Promise((r) => setTimeout(r, 300));
+    const [[slid]] = await db.query('SELECT TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(), idle_expires_at) AS m FROM sessions WHERE token_hash = ?', [h(e)]);
+    ok(Number(slid.m) > 60, 'using a session slides its idle expiry forward', String(slid.m));
+    await db.query('UPDATE sessions SET idle_expires_at = UTC_TIMESTAMP() - INTERVAL 1 MINUTE WHERE token_hash = ?', [h(e)]);
+    const idle = await call('GET', '/api/auth/me', null, e);
+    ok(idle.data.error?.code === 'SESSION_EXPIRED' && e.cookie === '', 'idle session expires and the cookie is cleared');
+    const f = (await login(email1, 'Passw0rd2')).token;
+    await db.query('UPDATE sessions SET absolute_expires_at = UTC_TIMESTAMP() - INTERVAL 1 SECOND WHERE token_hash = ?', [h(f)]);
+    ok((await call('GET', '/api/auth/me', null, f)).status === 401, 'session past its absolute lifetime is refused even if recently used');
+    await db.end();
+  }
+}
+
+// --- account lockout (5 failures in a row lock the account for a while)
+{
+  const u3 = await mkUser(3, comp);
+  const em3 = `t${stamp}3@test.local`;
+  const fails = [];
+  for (let i = 0; i < 5; i++) fails.push((await call('POST', '/api/auth/login', { email: em3, password: 'wrong-pass-1' })).data.error?.code);
+  ok(fails.every((c) => c === 'INVALID_CREDENTIALS'), 'first 5 wrong passwords get the normal error');
+  const lockedRes = await call('POST', '/api/auth/login', { email: em3, password: 'Passw0rd1' });
+  ok(lockedRes.status === 429 && lockedRes.data.error.code === 'ACCOUNT_LOCKED' && lockedRes.data.error.retry_after_s > 800, 'after 5 failures even the right password is refused for ~15 minutes', JSON.stringify(lockedRes.data));
+  ok((await call('GET', '/api/auth/me', null, u3.token)).status === 200, 'an existing session is not ended by the lock');
+  const ghost = `nobody${stamp}@test.local`;
+  for (let i = 0; i < 5; i++) await call('POST', '/api/auth/login', { email: ghost, password: 'wrong-pass-1' });
+  const g = await call('POST', '/api/auth/login', { email: ghost, password: 'wrong-pass-1' });
+  ok(g.data.error?.code === 'ACCOUNT_LOCKED', 'unknown emails "lock" the same way (no account enumeration)');
+  const users = (await call('GET', `/api/admin/users?search=${encodeURIComponent(em3)}`, null, admin.token)).data.users;
+  ok(users[0]?.locked_until && /Z$/.test(users[0].locked_until), 'admin user list shows the lock');
+  ok((await call('POST', `/api/admin/users/${u3.user.user_id}/unlock`, null, admin.token)).status === 200, 'admin unlocks the account');
+  ok((await login(em3, 'Passw0rd1')).res.status === 200, 'unlocked account can log in again');
+  ok((await call('GET', '/api/admin/audit-logs?action=ACCOUNT_LOCKED', null, admin.token)).data.logs.some((l) => l.email === em3), 'the lock is recorded in the audit log');
+  if (process.env.E2E_DB !== '0') {
+    // the next lock lasts twice as long (lock_count kept until a successful login)
+    const mysql = (await import('mysql2/promise')).default;
+    const { dbConfig } = await import('../src/db-config.js');
+    const db = await mysql.createConnection(dbConfig);
+    await db.execute('UPDATE users SET lock_count = 1 WHERE email = ?', [em3]);
+    for (let i = 0; i < 5; i++) await call('POST', '/api/auth/login', { email: em3, password: 'wrong-pass-1' });
+    const again = await call('POST', '/api/auth/login', { email: em3, password: 'Passw0rd1' });
+    ok(again.data.error?.retry_after_s > 25 * 60, 'a repeat lock lasts longer (30 minutes)', String(again.data.error?.retry_after_s));
+    await db.end();
+  }
+}
+
+// --- two-factor login (TOTP) for administrators
+{
+  const T = await import('../src/totp.js');
+  const s1 = Buffer.from('12345678901234567890');
+  ok(T.totp(s1, 59e3, 8) === '94287082' && T.totp(s1, 1111111109e3, 8) === '07081804' && T.totp(s1, 20000000000e3, 8) === '65353130', 'TOTP matches the RFC 6238 test vectors');
+  ok((await call('POST', '/api/account/2fa/setup', { password: 'Passw0rd2' }, u1.token)).status === 403, 'two-factor setup is for administrators');
+  const a5 = await mkUser(5, comp);
+  const em5 = `t${stamp}5@test.local`;
+  await call('PATCH', `/api/admin/users/${a5.user.user_id}`, { role: 'admin' }, admin.token);
+  ok((await call('GET', '/api/auth/me', null, a5.token)).status === 401, 'role change logs the person out');
+  let ad = (await login(em5, 'Passw0rd1')).token;
+  ok((await call('POST', '/api/account/2fa/setup', { password: 'wrong' }, ad)).data.error?.code === 'WRONG_PASSWORD', 'setup asks for the password again');
+  const setup = (await call('POST', '/api/account/2fa/setup', { password: 'Passw0rd1' }, ad)).data;
+  ok(/^data:image\/png;base64,/.test(setup.qr_data_url) && /^otpauth:\/\/totp\/CampusSeat:/.test(setup.otpauth_uri) && setup.secret.replace(/ /g, '').length === 32, 'setup returns a QR code (data URL) and the secret');
+  const secret = T.base32Decode(setup.secret);
+  ok((await call('POST', '/api/account/2fa/enable', { code: '000000' }, ad)).data.error?.code === 'INVALID_2FA_CODE', 'wrong confirmation code does not turn 2FA on');
+  ok((await login(em5, 'Passw0rd1')).res.data.mfa_required === undefined, 'unconfirmed setup does not affect login');
+  ad = (await login(em5, 'Passw0rd1')).token;
+  const en = await call('POST', '/api/account/2fa/enable', { code: T.totp(secret) }, ad);
+  ok(en.status === 200 && en.data.backup_codes.length === 10 && /^[A-Z2-9]{5}-[A-Z2-9]{5}$/.test(en.data.backup_codes[0]), '2FA turns on with a correct code and gives 10 backup codes');
+  const codes = en.data.backup_codes;
+  ok((await call('GET', '/api/auth/me', null, ad)).data.user.two_factor === true, 'user shows two_factor: true');
+
+  const step1 = await login(em5, 'Passw0rd1');
+  ok(step1.res.data.mfa_required === true && step1.res.data.challenge && !step1.token.cookie && !step1.res.data.user, 'password alone no longer logs in: a challenge is returned, no session cookie');
+  const wrong = await call('POST', '/api/auth/2fa', { challenge: step1.res.data.challenge, code: '123456' });
+  ok(wrong.data.error?.code === 'INVALID_2FA_CODE' && wrong.data.error.attempts_left === 4, 'wrong code is refused with attempts left');
+  const nextCode = T.hotp(secret, T.stepAt() + 1); // next time step (one step of drift is allowed)
+  const good = await call('POST', '/api/auth/2fa', { challenge: step1.res.data.challenge, code: nextCode });
+  ok(good.status === 200 && good.data.user?.email === em5 && readSetCookie(good.raw), 'correct app code completes login and sets the session cookie');
+  ok((await call('POST', '/api/auth/2fa', { challenge: step1.res.data.challenge, code: nextCode })).data.error?.code === 'CHALLENGE_EXPIRED', 'a challenge cannot be used twice');
+  const step2 = await login(em5, 'Passw0rd1');
+  ok((await call('POST', '/api/auth/2fa', { challenge: step2.res.data.challenge, code: nextCode })).data.error?.code === 'INVALID_2FA_CODE', 'an app code cannot be replayed');
+  const bk = await call('POST', '/api/auth/2fa', { challenge: step2.res.data.challenge, code: ` ${codes[0].toLowerCase().replace('-', ' ')} ` });
+  ok(bk.status === 200, 'a backup code works (case, spaces and dash ignored)');
+  const step3 = await login(em5, 'Passw0rd1');
+  ok((await call('POST', '/api/auth/2fa', { challenge: step3.res.data.challenge, code: codes[0] })).data.error?.code === 'INVALID_2FA_CODE', 'each backup code works only once');
+  ok((await call('POST', '/api/auth/2fa', { challenge: 'made-up', code: nextCode })).data.error?.code === 'CHALLENGE_EXPIRED', 'unknown challenge is refused');
+  ad = sessionFrom(bk);
+  ok((await call('GET', '/api/account/2fa', null, ad)).data.backup_codes_left === 9, 'status shows backup codes left');
+  ok((await call('GET', '/api/admin/audit-logs?action=2FA_BACKUP_USED', null, admin.token)).data.logs.some((l) => l.email === em5), 'backup code use is audited');
+  const regen = await call('POST', '/api/account/2fa/backup-codes', { password: 'Passw0rd1', code: codes[1] }, ad);
+  ok(regen.data.backup_codes?.length === 10 && !regen.data.backup_codes.includes(codes[2]), 'backup codes can be regenerated (password + code)');
+  const fresh = regen.data.backup_codes;
+  await call('POST', `/api/admin/users/${a5.user.user_id}/unlock`, null, admin.token); // reset the failure count from the checks above
+  const step4 = await login(em5, 'Passw0rd1');
+  ok((await call('POST', '/api/auth/2fa', { challenge: step4.res.data.challenge, code: codes[2] })).data.error?.code === 'INVALID_2FA_CODE', 'old backup codes stop working after regeneration');
+
+  // wrong codes count toward the account lock: 4 more here make 5 in a row
+  let last;
+  for (let i = 0; i < 4; i++) last = await call('POST', '/api/auth/2fa', { challenge: step4.res.data.challenge, code: '000000' });
+  ok(last.data.error?.code === 'CHALLENGE_EXPIRED', 'after 5 wrong codes the challenge is dropped');
+  ok((await call('POST', '/api/auth/login', { email: em5, password: 'Passw0rd1' })).data.error?.code === 'ACCOUNT_LOCKED', 'wrong two-factor codes lock the account like wrong passwords');
+  await call('POST', `/api/admin/users/${a5.user.user_id}/unlock`, null, admin.token);
+
+  ok((await call('POST', '/api/account/2fa/disable', { password: 'Passw0rd1', code: '000000' }, ad)).data.error?.code === 'INVALID_2FA_CODE', 'turning 2FA off needs a valid code');
+  ok((await call('POST', '/api/account/2fa/disable', { password: 'Passw0rd1', code: fresh[0] }, ad)).status === 200, 'turning 2FA off with password + code');
+  const plain = await login(em5, 'Passw0rd1');
+  ok(plain.res.status === 200 && plain.res.data.user && !plain.res.data.mfa_required, 'after turning it off, password login works again');
+  ok((await call('GET', '/api/admin/audit-logs?action=2FA_ENABLE', null, admin.token)).data.logs.some((l) => l.email === em5), '2FA changes are audited');
+}
 
 // --- events (admin CRUD)
 const future = new Date(Date.now() + 9 * 864e5).toLocaleDateString('en-CA');
@@ -86,13 +263,61 @@ for (const fmt of ['pdf', 'csv', 'json']) {
 }
 ok((await call('GET', '/api/admin/reports/events?format=pdf', null, admin.token)).data.slice(0, 4).toString() === '%PDF', 'events summary report (pdf)');
 const logs = (await call('GET', '/api/admin/audit-logs?action=BOOK_SEAT', null, admin.token)).data;
-ok(logs.total >= 5 && logs.logs[0].full_name, 'audit log records who booked');
+ok(logs.meta.total >= 5 && logs.logs[0].full_name, 'audit log records who booked');
 const reset = await call('POST', `/api/admin/users/${u2.user.user_id}/reset-password`, null, admin.token);
 ok(/.{10,}/.test(reset.data.temporary_password || ''), 'admin resets a password');
-ok((await call('POST', '/api/auth/login', { email: `t${stamp}2@test.local`, password: reset.data.temporary_password })).status === 200, 'user logs in with temporary password');
-const fp = await call('POST', '/api/auth/forgot-password', { email: `t${stamp}2@test.local`, student_number: u2.creds.student_number, new_password: 'NewPass123' });
-ok(fp.status === 200, 'forgot password with email + student number');
-ok((await call('POST', '/api/auth/forgot-password', { email: `t${stamp}2@test.local`, student_number: 'wrong', new_password: 'NewPass123' })).status === 404, 'forgot password rejects wrong student number');
+ok((await call('GET', '/api/auth/me', null, u2.token)).status === 401, "admin password reset logs the user out everywhere");
+const u2again = await login(`t${stamp}2@test.local`, reset.data.temporary_password);
+ok(u2again.res.status === 200, 'user logs in with temporary password');
+u2.token = u2again.token;
+// --- forgot password: emailed single-use, expiring link (replaces "email + student number")
+{
+  const em2 = `t${stamp}2@test.local`;
+  const inbox = async (to) => (await call('GET', `/api/_test/mail?to=${encodeURIComponent(to)}`)).data.messages;
+  const tokenOf = (m) => m.text.match(/#token=([A-Za-z0-9_-]+)/)?.[1];
+  const known = await call('POST', '/api/auth/forgot-password', { email: em2 });
+  const unknown = await call('POST', '/api/auth/forgot-password', { email: `nobody-${stamp}@test.local` });
+  ok(known.status === 200 && unknown.status === 200 && known.data.message === unknown.data.message, 'forgot password answers the same for known and unknown emails');
+  const old = await call('POST', '/api/auth/forgot-password', { email: em2, student_number: u2.creds.student_number, new_password: 'NewPass123' });
+  ok(old.status === 200 && (await login(em2, 'NewPass123')).res.status === 401, 'old email + student number reset no longer changes the password');
+  const mails = await inbox(em2);
+  ok(mails.length === 2 && /reset-password#token=/.test(mails[0].text) && mails[0].html.includes('Choose a new password'), 'reset email is sent with a link (text and HTML)');
+  ok((await inbox(`nobody-${stamp}@test.local`)).length === 0, 'no email for an unknown address');
+  const [first, second] = mails.map(tokenOf);
+  ok((await call('POST', '/api/auth/reset-password/verify', { token: first })).data.valid === false, 'a newer request invalidates the earlier link');
+  ok((await call('POST', '/api/auth/reset-password/verify', { token: second })).data.valid === true, 'the latest link is valid');
+  ok((await call('POST', '/api/auth/reset-password', { token: second, new_password: 'weak' })).data.error?.field === 'new_password'
+    && (await call('POST', '/api/auth/reset-password/verify', { token: second })).data.valid === true, 'a weak new password is rejected without using up the link');
+  const before = u2.token;
+  const done = await call('POST', '/api/auth/reset-password', { token: second, new_password: 'NewPass123' });
+  ok(done.status === 200, 'password is reset with the emailed link');
+  ok((await call('GET', '/api/auth/me', null, before)).status === 401, 'resetting the password logs out existing sessions');
+  ok((await login(em2, reset.data.temporary_password)).res.status === 401, 'old password stops working');
+  const fresh = await login(em2, 'NewPass123');
+  ok(fresh.res.status === 200, 'new password works');
+  u2.token = fresh.token;
+  ok((await call('POST', '/api/auth/reset-password', { token: second, new_password: 'Another123' })).data.error?.code === 'INVALID_RESET_TOKEN', 'a reset link works only once');
+  ok((await call('POST', '/api/auth/reset-password', { token: 'x'.repeat(43), new_password: 'Another123' })).data.error?.code === 'INVALID_RESET_TOKEN', 'a made-up token is refused');
+  if (process.env.E2E_DB !== '0') {
+    const mysql = (await import('mysql2/promise')).default;
+    const { dbConfig } = await import('../src/db-config.js');
+    const db = await mysql.createConnection(dbConfig);
+    await db.execute('DELETE pr FROM password_resets pr JOIN users u ON u.user_id = pr.user_id WHERE u.email = ?', [em2]); // clear the hourly limit
+    await call('POST', '/api/auth/forgot-password', { email: em2 });
+    const t3 = tokenOf((await inbox(em2)).at(-1));
+    const [[stored]] = await db.execute('SELECT COUNT(*) AS n FROM password_resets WHERE token_hash = ?', [t3]);
+    ok(Number(stored.n) === 0, 'database stores only a hash of the reset token');
+    await db.execute("UPDATE password_resets pr JOIN users u ON u.user_id = pr.user_id SET pr.expires_at = UTC_TIMESTAMP() - INTERVAL 1 SECOND WHERE u.email = ?", [em2]);
+    ok((await call('POST', '/api/auth/reset-password', { token: t3, new_password: 'Another123' })).data.error?.code === 'INVALID_RESET_TOKEN', 'an expired reset link is refused');
+    for (let i = 0; i < 3; i++) await call('POST', '/api/auth/forgot-password', { email: em2 });
+    const count = (await inbox(em2)).length;
+    await call('POST', '/api/auth/forgot-password', { email: em2 });
+    ok((await inbox(em2)).length === count, 'at most 3 reset emails per account per hour');
+    await db.end();
+  }
+  const adm = await call('POST', `/api/admin/users/${u1.user.user_id}/send-reset-email`, null, admin.token);
+  ok(adm.status === 200 && (await inbox(`t${stamp}1@test.local`)).length === 1, 'admin can send a user a reset link');
+}
 ok((await call('DELETE', `/api/admin/users/${u1.user.user_id}`, null, admin.token)).data.error?.code === 'IN_USE', 'cannot delete a user who has bookings');
 ok((await call('DELETE', `/api/bookings/${b1.data.booking.booking_id}`, null, admin.token)).status === 200, 'admin cancels a booking');
 ok((await call('GET', `/api/events/${ev.event_id}`)).data.event.seats_remaining === 1, 'cancelled seat becomes available again');
@@ -100,5 +325,197 @@ const del = await call('DELETE', `/api/events/${ev.event_id}`, null, admin.token
 ok(del.status === 200 && del.data.removed_bookings === 4, 'admin deletes event (bookings removed)');
 await call('DELETE', `/api/events/${evLaw.event_id}`, null, admin.token);
 ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted event is gone (404)');
+// --- cancellation by the user, and the waitlist
+{
+  const inbox = async (to) => (await call('GET', `/api/_test/mail?to=${encodeURIComponent(to)}`)).data.messages;
+  const people = await Promise.all(Array.from({ length: 16 }, (_, i) => mkUser(300 + i, comp)));
+  const emailOf = (u) => u.user.email;
+  const W = (await call('POST', '/api/events', mk({ title: `Waitlist ${stamp}`, capacity: 2 }), admin.token)).data.event;
+  const [h1, h2] = people;
+  await book(h1, W.event_id);
+  ok((await call('POST', `/api/events/${W.event_id}/waitlist`, null, people[2].token)).data.error?.code === 'SEATS_AVAILABLE', 'cannot join the waitlist while seats are left');
+  await book(h2, W.event_id);
+  const fullErr = (await book(people[2], W.event_id)).data.error;
+  ok(fullErr?.code === 'EVENT_FULL' && fullErr.waitlist === true, 'full event offers the waitlist');
+
+  // 10 people join at the same moment: everyone gets a distinct place in the queue
+  const joiners = people.slice(2, 12);
+  const joins = await Promise.all(joiners.map((u) => call('POST', `/api/events/${W.event_id}/waitlist`, null, u.token)));
+  const positions = joins.map((r) => r.data.waitlist?.position).sort((a, b) => a - b);
+  ok(joins.every((r) => r.status === 201) && positions.join(',') === '1,2,3,4,5,6,7,8,9,10', '10 simultaneous joins get positions 1 to 10', positions.join(','));
+  const queue = joiners.map((u, i) => ({ u, pos: joins[i].data.waitlist.position })).sort((a, b) => a.pos - b.pos).map((x) => x.u);
+  ok((await call('POST', `/api/events/${W.event_id}/waitlist`, null, queue[0].token)).data.error?.code === 'ALREADY_WAITING', 'cannot join twice');
+  ok((await call('POST', `/api/events/${W.event_id}/waitlist`, null, h1.token)).data.error?.code === 'DUPLICATE_BOOKING', 'seat holders cannot join the waitlist');
+  const seen = (await call('GET', `/api/events/${W.event_id}`, null, queue[1].token)).data.event;
+  ok(seen.my_waitlist?.position === 2 && seen.waitlist_count === 10, 'event shows my place in the queue and the queue length');
+  const adminQ = (await call('GET', `/api/events/${W.event_id}/waitlist`, null, admin.token)).data.waitlist;
+  ok(adminQ.length === 10 && adminQ[0].email === emailOf(queue[0]), 'admin sees the queue in order');
+
+  // the owner cancels: the first person in the queue gets the seat, in the same transaction
+  const h1b = (await call('GET', `/api/bookings/mine?event_id=${W.event_id}`, null, h1.token)).data.bookings[0];
+  ok((await call('DELETE', `/api/bookings/${h1b.booking_id}`, null, h2.token)).status === 404, "cannot cancel someone else's booking");
+  const cx = await call('DELETE', `/api/bookings/${h1b.booking_id}`, null, h1.token);
+  ok(cx.status === 200 && cx.data.promoted === 1, 'owner cancels their booking; one person is promoted');
+  const firstMine = (await call('GET', `/api/bookings/mine?event_id=${W.event_id}`, null, queue[0].token)).data.bookings;
+  ok(firstMine.length === 1, 'the first person in the queue now holds a seat');
+  const promoMail = (await inbox(emailOf(queue[0]))).at(-1);
+  ok(promoMail?.subject.startsWith('You have a seat') && promoMail.text.includes(firstMine[0].booking_ref), 'promoted person is emailed with their booking reference');
+  const afterCx = (await call('GET', `/api/events/${W.event_id}`, null, queue[1].token)).data.event;
+  ok(afterCx.seats_remaining === 0 && afterCx.waitlist_count === 9 && afterCx.my_waitlist.position === 1, 'event stays full; everyone moves up one place');
+  ok((await call('GET', '/api/admin/audit-logs?action=WAITLIST_PROMOTE&search=' + encodeURIComponent(`Waitlist ${stamp}`), null, admin.token)).data.meta.total === 1, 'the promotion is audited');
+
+  // leaving the queue
+  ok((await call('DELETE', `/api/events/${W.event_id}/waitlist`, null, queue[3].token)).status === 200, 'a person leaves the waitlist');
+  ok((await call('DELETE', `/api/events/${W.event_id}/waitlist`, null, queue[3].token)).data.error?.code === 'NOT_WAITING', 'leaving twice is refused');
+  const myW = (await call('GET', '/api/bookings/waitlist', null, queue[4].token)).data.waitlist.find((w) => w.event_id === W.event_id);
+  ok(myW?.position === 3, 'my waitlist page shows the updated position', JSON.stringify(myW));
+
+  // more capacity: the next people in order are promoted
+  const grown = await call('PUT', `/api/events/${W.event_id}`, mk({ title: `Waitlist ${stamp}`, capacity: 4 }), admin.token);
+  ok(grown.data.event?.booked === 4 && grown.data.event.waitlist_count === 6, 'raising capacity by 2 promotes 2 people', JSON.stringify(grown.data.event && { b: grown.data.event.booked, w: grown.data.event.waitlist_count }));
+  const got = await Promise.all([queue[1], queue[2], queue[4]].map(async (u) => (await call('GET', `/api/bookings/mine?event_id=${W.event_id}`, null, u.token)).data.bookings.length));
+  ok(got.join(',') === '1,1,0', 'promotion follows queue order (left person skipped)', got.join(','));
+
+  // race: a holder cancels while 4 non-waiting people try to grab the seat directly
+  const grabbers = people.slice(12, 16);
+  const holder = (await call('GET', `/api/bookings/mine?event_id=${W.event_id}`, null, queue[1].token)).data.bookings[0];
+  const [cancelRes, ...grabs] = await Promise.all([call('DELETE', `/api/bookings/${holder.booking_id}`, null, queue[1].token), ...grabbers.map((u) => book(u, W.event_id))]);
+  const after = (await call('GET', `/api/events/${W.event_id}`)).data.event;
+  ok(cancelRes.status === 200 && after.booked === 4 && grabs.every((r) => r.data.error?.code === 'EVENT_FULL'),
+    'cancel racing 4 direct bookings: the waitlist gets the seat, never overbooked', JSON.stringify({ booked: after.booked, codes: grabs.map((r) => r.data.error?.code || r.status) }));
+  // race: two holders cancel at once: two different people are promoted
+  const hs = await Promise.all([queue[0], queue[2]].map(async (u) => ({ u, b: (await call('GET', `/api/bookings/mine?event_id=${W.event_id}`, null, u.token)).data.bookings[0] })));
+  const both = await Promise.all(hs.map(({ u, b }) => call('DELETE', `/api/bookings/${b.booking_id}`, null, u.token)));
+  const after2 = (await call('GET', `/api/events/${W.event_id}`)).data.event;
+  ok(both.every((r) => r.data.promoted === 1) && after2.booked === 4 && after2.waitlist_count === 3, 'two simultaneous cancellations promote two people; still exactly full', JSON.stringify({ booked: after2.booked, w: after2.waitlist_count }));
+
+  // eligibility is re-checked on promotion
+  const lawU = await mkUser(320, law);
+  const R = (await call('POST', '/api/events', mk({ title: `Restrict ${stamp}`, capacity: 1 }), admin.token)).data.event;
+  await book(people[12], R.event_id);
+  await call('POST', `/api/events/${R.event_id}/waitlist`, null, people[13].token);
+  await call('POST', `/api/events/${R.event_id}/waitlist`, null, lawU.token);
+  await call('PUT', `/api/events/${R.event_id}`, mk({ title: `Restrict ${stamp}`, capacity: 1, school_ids: [comp, law] }), admin.token);
+  await call('PUT', `/api/events/${R.event_id}`, mk({ title: `Restrict ${stamp}`, capacity: 1, school_ids: [law] }), admin.token);
+  const rb = (await call('GET', `/api/bookings/mine?event_id=${R.event_id}`, null, people[12].token)).data.bookings[0];
+  await call('DELETE', `/api/bookings/${rb.booking_id}`, null, admin.token);
+  ok((await call('GET', `/api/bookings/mine?event_id=${R.event_id}`, null, lawU.token)).data.bookings.length === 1
+    && (await call('GET', `/api/bookings/mine?event_id=${R.event_id}`, null, people[13].token)).data.bookings.length === 0,
+    'promotion skips people no longer eligible after a school restriction');
+
+  // cancellation cutoff (2 hours before the start) for the owner; admins can still cancel
+  const nb = (d) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    .formatToParts(d).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
+  const s0 = nb(new Date(Date.now() + 61 * 60e3)); const e0 = nb(new Date(Date.now() + 121 * 60e3));
+  if (`${s0.year}-${s0.month}-${s0.day}` === `${e0.year}-${e0.month}-${e0.day}`) {
+    const C = (await call('POST', '/api/events', mk({ title: `Soon ${stamp}`, event_date: `${s0.year}-${s0.month}-${s0.day}`, start_time: `${s0.hour}:${s0.minute}`, end_time: `${e0.hour}:${e0.minute}` }), admin.token)).data.event;
+    const cb = (await book(people[14], C.event_id)).data.booking;
+    const late = await call('DELETE', `/api/bookings/${cb.booking_id}`, null, people[14].token);
+    ok(late.data.error?.code === 'CANCEL_CUTOFF' && late.data.error.deadline, 'owner cannot cancel within 2 hours of the start', JSON.stringify(late.data));
+    ok((await call('DELETE', `/api/bookings/${cb.booking_id}`, null, admin.token)).status === 200, 'an admin can still cancel close to the start');
+    await call('DELETE', `/api/events/${C.event_id}`, null, admin.token);
+  } else console.log('SKIP  cancellation cutoff check (event would cross midnight in Nairobi)');
+  ok((await call('GET', `/api/admin/audit-logs?action=CANCEL_BOOKING&search=${encodeURIComponent('by its owner')}`, null, admin.token)).data.meta.total >= 3, 'owner cancellations are audited');
+  for (const e of [W, R]) await call('DELETE', `/api/events/${e.event_id}`, null, admin.token);
+}
+
+// --- CSV exports cannot smuggle spreadsheet formulas
+{
+  const evil = (await call('POST', '/api/events', mk({ title: `=HYPERLINK("http://x.example","${stamp}")`, capacity: 2 }), admin.token)).data.event;
+  const r = await call('GET', `/api/admin/reports/events?format=csv&from=${future}&to=${future}`, null, admin.token);
+  const text = r.data.toString('utf8');
+  ok(text.includes(`"'=HYPERLINK(`) && !/(^|,)"?=HYPERLINK/m.test(text), 'CSV cells starting with = are neutralised', text.split('\n').find((l) => l.includes(stamp)));
+  await call('DELETE', `/api/events/${evil.event_id}`, null, admin.token);
+}
+
+// --- lists: pagination, sorting, one response shape
+{
+  const extra = [];
+  for (let i = 0; i < 3; i++) extra.push((await call('POST', '/api/events', mk({ title: `Pager ${stamp} ${'CBA'[i]}`, capacity: 3 + i }), admin.token)).data.event);
+  const q = `search=${encodeURIComponent('Pager ' + stamp)}`;
+  const all = (await call('GET', `/api/events?${q}`)).data;
+  ok(all.meta && all.meta.total === 3 && all.meta.page === 1 && all.meta.limit === 50 && all.meta.pages === 1 && all.meta.sort === 'date', 'event list returns { events, meta } with defaults');
+  const p1 = (await call('GET', `/api/events?${q}&limit=2&page=1&sort=title`)).data;
+  const p2 = (await call('GET', `/api/events?${q}&limit=2&page=2&sort=title`)).data;
+  ok(p1.events.length === 2 && p2.events.length === 1 && p1.meta.pages === 2, 'events page 1 has 2, page 2 has the rest');
+  ok([...p1.events, ...p2.events].map((e) => e.title.slice(-1)).join('') === 'ABC', 'sort=title orders A to Z across pages');
+  ok((await call('GET', `/api/events?${q}&sort=title&dir=desc`)).data.events.map((e) => e.title.slice(-1)).join('') === 'CBA', 'dir=desc reverses the order');
+  ok((await call('GET', `/api/events?${q}&sort=drop table`)).data.error?.field === 'sort', 'unknown sort key is refused (400)');
+  const lenient = (await call('GET', `/api/events?${q}&limit=5000&page=abc`)).data.meta;
+  ok(lenient.limit === 100 && lenient.page === 1, 'bad page falls back to 1 and limit is capped at 100');
+  const ul = (await call('GET', '/api/admin/users?limit=2&sort=name&dir=asc', null, admin.token)).data;
+  ok(ul.users.length === 2 && ul.meta.total > 2 && ul.users[0].full_name <= ul.users[1].full_name, 'admin users list is paginated and sortable');
+  await book(u1, extra[0].event_id); await book(u2, extra[0].event_id);
+  const bl = (await call('GET', `/api/bookings?limit=1&event_id=${extra[0].event_id}`, null, admin.token)).data;
+  ok(bl.bookings.length === 1 && bl.meta.total === 2 && bl.meta.pages === 2, 'admin bookings list is paginated', JSON.stringify(bl.meta));
+  const mineOne = (await call('GET', `/api/bookings/mine?event_id=${extra[0].event_id}`, null, u1.token)).data;
+  ok(mineOne.bookings.length === 1 && mineOne.meta.total === 1, 'my bookings can be filtered to one event');
+  const al = (await call('GET', '/api/admin/audit-logs?limit=3', null, admin.token)).data;
+  ok(al.logs.length === 3 && al.meta.total > 3 && Array.isArray(al.actions), 'audit log list uses the same meta shape');
+  const opts = (await call('GET', '/api/admin/event-options', null, admin.token)).data;
+  ok(opts.events.some((e) => e.event_id === extra[0].event_id) && opts.meta.total === opts.events.length, 'admin event picker lists every event');
+  ok((await call('GET', '/api/admin/event-options', null, u1.token)).status === 403, 'event picker is admin only');
+  for (const e of extra) await call('DELETE', `/api/events/${e.event_id}`, null, admin.token);
+}
+
+// --- time zones: the database stores UTC, people work in Nairobi time (UTC+3)
+{
+  const nbo = (d = new Date()) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    .formatToParts(d).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
+  const n = nbo();
+  const todayNbo = `${n.year}-${n.month}-${n.day}`;
+  const hm = (d) => { const p = nbo(d); return `${p.hour}:${p.minute}`; };
+  const addDay = (ymd, k) => { const d = new Date(`${ymd}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + k); return d.toISOString().slice(0, 10); };
+
+  ok(ev.starts_at === `${future}T07:00:00Z` && ev.ends_at === `${future}T09:00:00Z`, '10:00-12:00 Nairobi is stored as 07:00-09:00 UTC', `${ev.starts_at} ${ev.ends_at}`);
+  const tomorrow = addDay(todayNbo, 1);
+  const early = (await call('POST', '/api/events', mk({ title: `Early ${stamp}`, event_date: tomorrow, start_time: '01:00', end_time: '02:00' }), admin.token)).data.event;
+  ok(early?.starts_at === `${todayNbo}T22:00:00Z` && early.event_date === tomorrow && early.start_time.startsWith('01:00'),
+    'event at 01:00 Nairobi falls on the previous UTC day but keeps its Nairobi date and time', JSON.stringify(early));
+  await call('DELETE', `/api/events/${early.event_id}`, null, admin.token);
+
+  const minsNow = Number(n.hour) * 60 + Number(n.minute);
+  if (minsNow >= 35 && minsNow <= 23 * 60 + 54) {
+    // An event happening right now in Nairobi: bookable until its end, then "past".
+    const startT = hm(new Date(Date.now() - 30 * 60e3)), endSoon = hm(new Date(Date.now() + 4 * 60e3)), endGone = hm(new Date(Date.now() - 60e3));
+    const now1 = (await call('POST', '/api/events', mk({ title: `Now ${stamp}`, event_date: todayNbo, start_time: startT, end_time: endSoon }), admin.token)).data.event;
+    ok(now1 && now1.is_past === false, 'event ending in 4 minutes (Nairobi) is not past', JSON.stringify(now1));
+    const ub = await book(u2, now1.event_id);
+    ok(ub.status === 201, 'event later today in Nairobi can be booked', JSON.stringify(ub.data));
+    const mineNow = (await call('GET', '/api/bookings/mine', null, u2.token)).data.bookings.find((b) => b.event_id === now1.event_id);
+    ok(/Z$/.test(mineNow.booked_at) && Math.abs(new Date(mineNow.booked_at) - Date.now()) < 120e3, 'booked_at is returned as ISO UTC and matches the real time', mineNow.booked_at);
+    const today1 = (await call('GET', `/api/admin/audit-logs?action=BOOK_SEAT&from=${todayNbo}&to=${todayNbo}&search=${encodeURIComponent('Now ' + stamp)}`, null, admin.token)).data;
+    ok(today1.meta.total === 1, "audit date filter uses Nairobi days (today's booking is found)");
+    await call('PUT', `/api/events/${now1.event_id}`, mk({ title: `Now ${stamp}`, event_date: todayNbo, start_time: startT, end_time: endGone }), admin.token);
+    const gone = (await call('GET', `/api/events/${now1.event_id}`)).data.event;
+    ok(gone.is_past === true, 'event that ended 1 minute ago (Nairobi) is past');
+    ok((await book(u1, now1.event_id)).data.error?.code === 'EVENT_PAST', 'booking an event that just ended is refused');
+    ok(!(await call('GET', `/api/events?search=${encodeURIComponent('Now ' + stamp)}`)).data.events.length, 'ended event is hidden from the public list');
+    ok((await call('POST', '/api/events', mk({ title: `Gone ${stamp}`, event_date: todayNbo, start_time: startT, end_time: endGone }), admin.token)).data.error?.field === 'end_time', 'creating an event whose end time already passed today is refused');
+    await call('DELETE', `/api/events/${now1.event_id}`, null, admin.token);
+  } else {
+    console.log('SKIP  "happening now" time-zone checks (too close to midnight in Nairobi)');
+  }
+}
+
+// --- operations: health, readiness, request ids, config validation
+const h = await call('GET', '/api/health');
+ok(h.status === 200 && h.data.db?.ok === true && typeof h.data.db.latency_ms === 'number', 'health reports database ok with latency');
+const rd = await call('GET', '/api/ready');
+ok(rd.status === 200 && rd.data.migrations?.ok === true && rd.data.migrations.pending.length === 0, 'ready: database reachable and migrations up to date');
+ok(/^[0-9a-f-]{36}$/.test(h.headers.get('x-request-id') || ''), 'every response carries a generated X-Request-Id');
+ok((await call('GET', '/api/schools', null, null, { 'X-Request-Id': 'trace-abc-12345' })).headers.get('x-request-id') === 'trace-abc-12345', 'well-formed incoming request id is reused');
+ok(/^[0-9a-f-]{36}$/.test((await call('GET', '/api/schools', null, null, { 'X-Request-Id': 'bad id <script>' })).headers.get('x-request-id')), 'malformed incoming request id is replaced');
+const nf = await call('GET', '/api/nope');
+ok(nf.status === 404 && nf.data.error.request_id === nf.headers.get('x-request-id'), 'error responses include the request id');
+{
+  const { spawnSync } = await import('node:child_process');
+  const r = spawnSync(process.execPath, ['-e', "import('./src/config.js')"], {
+    env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, NODE_ENV: 'production', DOTENV_CONFIG_PATH: 'none.env', COOKIE_SECURE: 'false', RATE_LIMIT_SCALE: '50' }, encoding: 'utf8' });
+  const msg = r.stderr || '';
+  ok(r.status === 1 && /COOKIE_SECURE must not be false/.test(msg) && /DB_PASSWORD is missing/.test(msg) && /APP_URL is missing/.test(msg) && /RATE_LIMIT_SCALE must not be set/.test(msg),
+    'invalid production config is refused at startup with every problem listed', msg.slice(0, 300));
+}
+
 console.log(`\n${pass} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
