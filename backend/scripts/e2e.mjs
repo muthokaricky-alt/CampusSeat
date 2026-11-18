@@ -612,6 +612,10 @@ ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted ev
   };
   ok(await ipFor('203.0.113.9, 10.31.22.165') === '203.0.113.9', 'internal proxy hops are skipped: the visitor IP is recorded');
   ok(await ipFor('198.51.100.7, 203.0.113.9, 10.0.0.5') === '203.0.113.9', 'a forged X-Forwarded-For entry cannot replace the real visitor IP');
+  // The live chain on Render: visitor -> Cloudflare edge (104.22.x.x seen in production) -> private load balancer.
+  ok(await ipFor('203.0.113.9, 104.22.160.57, 10.31.22.165') === '203.0.113.9', 'Cloudflare edge hops are skipped too: the visitor IP is recorded, not Cloudflare');
+  ok(await ipFor('198.51.100.7, 203.0.113.9, 104.22.109.103, 10.0.0.5') === '203.0.113.9', 'behind Cloudflare a forged entry still cannot replace the visitor IP');
+  ok(await ipFor('203.0.113.9, 2606:4700:10::6816:a039, 10.0.0.5') === '203.0.113.9', 'Cloudflare IPv6 edges are skipped as well');
 }
 
 // --- delivery: compression and caching
