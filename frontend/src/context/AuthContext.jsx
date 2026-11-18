@@ -2,6 +2,7 @@
 // server; this context only keeps who is logged in and the CSRF token for unsafe requests.
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { api, setCsrfToken, setUnauthorizedHandler } from '../lib/api.js';
+import { clearOfflineData } from '../pwa.js';
 
 const AuthCtx = createContext(null);
 export const useAuth = () => useContext(AuthCtx);
@@ -11,7 +12,7 @@ export function AuthProvider({ children }) {
   // We cannot read the cookie, so always ask the server once on load.
   const [loading, setLoading] = useState(true);
 
-  const clear = useCallback(() => { setCsrfToken(null); setUser(null); }, []);
+  const clear = useCallback(() => { setCsrfToken(null); setUser(null); clearOfflineData(); }, []);
   useEffect(() => { setUnauthorizedHandler(clear); }, [clear]);
 
   useEffect(() => {

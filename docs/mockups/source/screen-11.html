@@ -1,0 +1,31 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css"><style>
+.side { width: 128px; border-right: 1px solid #bbb; padding: 12px 10px; font-size: 10.5px; line-height: 2; }
+.side .on { background: #dde3ee; font-weight: bold; padding: 0 6px; margin: 0 -6px; border-radius: 3px; }
+.side small { color: #777; font-size: 9px; letter-spacing: .05em; display: block; margin-top: 4px; }
+.ok { border: 2px solid #3a8a55; background: #eef8f0; border-radius: 4px; padding: 10px; }
+.ok h3 { color: #2b6e41; font-size: 14px; margin-bottom: 6px; }
+dl { display: grid; grid-template-columns: 70px 1fr; gap: 3px 6px; font-size: 10px; } dt { color: #555; }
+.recent li { display: flex; justify-content: space-between; border-bottom: 1px solid #ddd; padding: 4px 0; list-style: none; }
+.recent { padding: 0; }
+</style></head><body><div class="frame">
+<div class="bar"><b>CampusSeat</b><nav><span>Events</span><span>My bookings</span><span>Admin panel</span><span>Log out</span></nav></div>
+<div style="display:flex">
+  <div class="side"><small>OVERVIEW</small>Dashboard<small>MANAGE</small><div class="on">Check-in</div>Events<br>Bookings<br>Users<small>RECORDS</small>Reports<br>Audit logs</div>
+  <div class="page" style="flex:1">
+    <div style="display:flex;justify-content:space-between"><div><h1>Check-in</h1><p class="sub">Scan each registration card at the door, or type its reference.</p></div>
+      <div style="text-align:right"><b style="font-size:20px">48</b><div style="color:#555">of 60 in</div></div></div>
+    <label>Event at this door</label><div class="field" style="color:#1f1f1f">Career Fair 2026 (09:00, Main Hall) &#9662;</div>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div class="box"><label>Booking reference</label>
+        <div style="display:flex;gap:6px"><div class="field" style="flex:1;font-family:monospace;border:2px solid #2d3e5a">CS-2026-00081</div><span class="btn" style="align-self:flex-start;margin-top:3px">Check in</span></div>
+        <div class="hint" style="margin-top:-3px">A barcode scanner types the reference and presses Enter.</div>
+        <span class="btn ghost">&#128247; Scan with camera</span></div>
+      <div class="ok"><h3>&#10003; Checked in</h3><b>Amina Otieno is in.</b>
+        <dl style="margin-top:6px"><dt>Student no.</dt><dd>SCES-2207</dd><dt>School</dt><dd>Computing and Engineering</dd><dt>Reference</dt><dd>CS-2026-00081</dd></dl></div>
+    </div>
+    <h2>Recent</h2>
+    <ul class="recent"><li><span>09:42 &nbsp;Amina Otieno &middot; CS-2026-00081</span><span style="text-decoration:underline">Undo</span></li>
+      <li><span>09:41 &nbsp;Brian Mwangi &middot; CS-2026-00077</span><span style="text-decoration:underline">Undo</span></li></ul>
+    <div class="note">Amber panel: card already used (shows when and by whom). Red panel: wrong event, unknown card, or check-in not open (3 h before start to 3 h after end). Results are also read out to screen readers and vibrate on phones.</div>
+  </div>
+</div></div></body></html>

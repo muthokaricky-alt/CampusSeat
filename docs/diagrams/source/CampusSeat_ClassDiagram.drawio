@@ -5,7 +5,7 @@
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
         <mxCell id="c15" parent="1" style="swimlane;fontStyle=1;align=center;startSize=26;html=1;collapsible=0;whiteSpace=wrap;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;" value="User" vertex="1">
-          <mxGeometry height="240" width="260" x="-480" y="-1050" as="geometry" />
+          <mxGeometry height="276" width="260" x="-480" y="-1050" as="geometry" />
         </mxCell>
         <mxCell id="c16" parent="c15" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="-userId: int&lt;br&gt;-fullName: string&lt;br&gt;-email: string&lt;br&gt;-studentNumber: string&lt;br&gt;-passwordHash: string&lt;br&gt;-role: string" vertex="1">
           <mxGeometry height="116" width="260" y="26" as="geometry" />
@@ -13,35 +13,35 @@
         <mxCell id="c17" parent="c15" style="line;strokeWidth=1;html=1;" value="" vertex="1">
           <mxGeometry height="2" width="260" y="142" as="geometry" />
         </mxCell>
-        <mxCell id="c18" parent="c15" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="+register()&lt;br&gt;+login()&lt;br&gt;+logout()&lt;br&gt;+resetPassword()&lt;br&gt;+viewMyBookings()" vertex="1">
-          <mxGeometry height="98" width="260" y="144" as="geometry" />
+        <mxCell id="c18" parent="c15" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="+register()&lt;br&gt;+login()&lt;br&gt;+logout()&lt;br&gt;+resetPassword()&lt;br&gt;+viewMyBookings()&lt;br&gt;+editProfile(name, number, school)&lt;br&gt;+saveEvent(event)" vertex="1">
+          <mxGeometry height="134" width="260" y="144" as="geometry" />
         </mxCell>
         <mxCell id="c19" parent="1" style="swimlane;fontStyle=1;align=center;startSize=26;html=1;collapsible=0;whiteSpace=wrap;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;" value="Booking" vertex="1">
-          <mxGeometry height="168" width="260" x="170" y="-1024" as="geometry" />
+          <mxGeometry height="204" width="260" x="170" y="-1024" as="geometry" />
         </mxCell>
-        <mxCell id="c20" parent="c19" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="-bookingId: int&lt;br&gt;-bookingRef: string&lt;br&gt;-bookingDate: datetime&lt;br&gt;-status: string" vertex="1">
-          <mxGeometry height="80" width="260" y="26" as="geometry" />
+        <mxCell id="c20" parent="c19" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="-bookingId: int&lt;br&gt;-bookingRef: string&lt;br&gt;-bookingDate: datetime&lt;br&gt;-status: string&lt;br&gt;-checkedInAt: datetime" vertex="1">
+          <mxGeometry height="98" width="260" y="26" as="geometry" />
         </mxCell>
         <mxCell id="c21" parent="c19" style="line;strokeWidth=1;html=1;" value="" vertex="1">
-          <mxGeometry height="2" width="260" y="106" as="geometry" />
+          <mxGeometry height="2" width="260" y="124" as="geometry" />
         </mxCell>
-        <mxCell id="c22" parent="c19" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="+confirm()&lt;br&gt;+cancel()&lt;br&gt;+getReference()" vertex="1">
-          <mxGeometry height="62" width="260" y="108" as="geometry" />
+        <mxCell id="c22" parent="c19" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="+confirm()&lt;br&gt;+cancel()&lt;br&gt;+getReference()&lt;br&gt;+isCheckedIn(): bool" vertex="1">
+          <mxGeometry height="80" width="260" y="126" as="geometry" />
         </mxCell>
         <mxCell id="c23" parent="1" style="swimlane;fontStyle=1;align=center;startSize=26;html=1;collapsible=0;whiteSpace=wrap;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;" value="AuditLog" vertex="1">
-          <mxGeometry height="114" width="200" x="-450" y="-1280" as="geometry" />
+          <mxGeometry height="168" width="200" x="-450" y="-1330" as="geometry" />
         </mxCell>
-        <mxCell id="c24" parent="c23" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="-logId: int&lt;br&gt;-action: string&lt;br&gt;-timestamp: datetime" vertex="1">
-          <mxGeometry height="62" width="200" y="26" as="geometry" />
+        <mxCell id="c24" parent="c23" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="-logId: int&lt;br&gt;-action: string&lt;br&gt;-entity: string&lt;br&gt;-before / after: json&lt;br&gt;-ip: string&lt;br&gt;-timestamp: datetime" vertex="1">
+          <mxGeometry height="116" width="200" y="26" as="geometry" />
         </mxCell>
         <mxCell id="c25" parent="c23" style="line;strokeWidth=1;html=1;" value="" vertex="1">
-          <mxGeometry height="2" width="200" y="88" as="geometry" />
+          <mxGeometry height="2" width="200" y="142" as="geometry" />
         </mxCell>
         <mxCell id="c26" parent="c23" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="+record(user, action)" vertex="1">
-          <mxGeometry height="26" width="200" y="90" as="geometry" />
+          <mxGeometry height="26" width="200" y="144" as="geometry" />
         </mxCell>
         <mxCell id="c27" parent="1" style="swimlane;fontStyle=1;align=center;startSize=26;html=1;collapsible=0;whiteSpace=wrap;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;" value="Admin" vertex="1">
-          <mxGeometry height="186" width="260" x="-460" y="-686" as="geometry" />
+          <mxGeometry height="222" width="260" x="-460" y="-686" as="geometry" />
         </mxCell>
         <mxCell id="c28" parent="c27" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="(no extra attributes)" vertex="1">
           <mxGeometry height="26" width="260" y="26" as="geometry" />
@@ -49,8 +49,8 @@
         <mxCell id="c29" parent="c27" style="line;strokeWidth=1;html=1;" value="" vertex="1">
           <mxGeometry height="2" width="260" y="52" as="geometry" />
         </mxCell>
-        <mxCell id="c30" parent="c27" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="+createEvent()&lt;br&gt;+editEvent()&lt;br&gt;+deleteEvent()&lt;br&gt;+setSchoolRestriction()&lt;br&gt;+viewBookings()&lt;br&gt;+manageUsers()&lt;br&gt;+generateReport()" vertex="1">
-          <mxGeometry height="134" width="260" y="54" as="geometry" />
+        <mxCell id="c30" parent="c27" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="+createEvent()&lt;br&gt;+editEvent()&lt;br&gt;+deleteEvent()&lt;br&gt;+setSchoolRestriction()&lt;br&gt;+viewBookings()&lt;br&gt;+manageUsers()&lt;br&gt;+generateReport()&lt;br&gt;+checkIn(reference)&lt;br&gt;+undoCheckIn(booking)" vertex="1">
+          <mxGeometry height="170" width="260" y="54" as="geometry" />
         </mxCell>
         <mxCell id="c35" parent="1" style="swimlane;fontStyle=1;align=center;startSize=26;html=1;collapsible=0;whiteSpace=wrap;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;" value="BookingService" vertex="1">
           <mxGeometry height="132" width="260" x="-160" y="-810" as="geometry" />
@@ -187,16 +187,16 @@
           </mxGeometry>
         </mxCell>
         <mxCell id="c31" parent="1" style="swimlane;fontStyle=1;align=center;startSize=26;html=1;collapsible=0;whiteSpace=wrap;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;" value="Event" vertex="1">
-          <mxGeometry height="258" width="260" x="220" y="-686" as="geometry" />
+          <mxGeometry height="312" width="260" x="220" y="-686" as="geometry" />
         </mxCell>
-        <mxCell id="c32" parent="c31" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="-eventId: int&lt;br&gt;-title: string&lt;br&gt;-description: string&lt;br&gt;-eventDate: date&lt;br&gt;-startTime: time&lt;br&gt;-venue: string&lt;br&gt;-capacity: int&lt;br&gt;-seatsRemaining: int" vertex="1">
-          <mxGeometry height="152" width="260" y="26" as="geometry" />
+        <mxCell id="c32" parent="c31" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="-eventId: int&lt;br&gt;-title: string&lt;br&gt;-category: string&lt;br&gt;-description: string&lt;br&gt;-eventDate: date&lt;br&gt;-startTime: time&lt;br&gt;-startsAt / endsAt: datetime (UTC)&lt;br&gt;-venue: string&lt;br&gt;-capacity: int&lt;br&gt;-seatsRemaining: int" vertex="1">
+          <mxGeometry height="188" width="260" y="26" as="geometry" />
         </mxCell>
         <mxCell id="c33" parent="c31" style="line;strokeWidth=1;html=1;" value="" vertex="1">
-          <mxGeometry height="2" width="260" y="178" as="geometry" />
+          <mxGeometry height="2" width="260" y="214" as="geometry" />
         </mxCell>
-        <mxCell id="c34" parent="c31" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="+hasSeats(): bool&lt;br&gt;+isOpenTo(school): bool&lt;br&gt;+reduceSeats()&lt;br&gt;+getDetails()" vertex="1">
-          <mxGeometry height="80" width="260" y="180" as="geometry" />
+        <mxCell id="c34" parent="c31" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="+hasSeats(): bool&lt;br&gt;+isOpenTo(school): bool&lt;br&gt;+reduceSeats()&lt;br&gt;+getDetails()&lt;br&gt;+isCheckInOpen(now): bool" vertex="1">
+          <mxGeometry height="98" width="260" y="216" as="geometry" />
         </mxCell>
         <mxCell id="_yham9WYlqEgW4WVI7yK-21" edge="1" parent="1" style="endArrow=block;dashed=1;endFill=0;endSize=12;html=1;rounded=0;" value="">
           <mxGeometry relative="1" width="160" as="geometry">
@@ -216,7 +216,13 @@
         <mxCell id="c14" parent="c11" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="+getName()" vertex="1">
           <mxGeometry height="26" width="200" y="72" as="geometry" />
         </mxCell>
-      </root>
+      <mxCell id="k1" parent="1" style="swimlane;fontStyle=1;align=center;startSize=26;html=1;collapsible=0;whiteSpace=wrap;fillColor=#dae8fc;strokeColor=#6c8ebf;swimlaneFillColor=#ffffff;" value="CheckInService" vertex="1"><mxGeometry height="132" width="270" x="530" y="-830" as="geometry" /></mxCell>
+<mxCell id="k2" parent="k1" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="-windowHours: int = 3" vertex="1"><mxGeometry height="26" width="270" y="26" as="geometry" /></mxCell>
+<mxCell id="k3" parent="k1" style="line;strokeWidth=1;html=1;" value="" vertex="1"><mxGeometry height="2" width="270" y="52" as="geometry" /></mxCell>
+<mxCell id="k4" parent="k1" style="text;html=1;align=left;verticalAlign=top;spacingLeft=6;whiteSpace=wrap;" value="+checkIn(reference, event): Booking&lt;br&gt;+undo(booking)&lt;br&gt;+normaliseRef(text): string&lt;br&gt;+openEvents(): Event[]" vertex="1"><mxGeometry height="80" width="270" y="54" as="geometry" /></mxCell>
+<mxCell id="k5" edge="1" parent="1" source="k1" style="endArrow=open;dashed=1;html=1;" target="c19" value=""><mxGeometry relative="1" as="geometry" /></mxCell>
+<mxCell id="k6" edge="1" parent="1" source="k1" style="endArrow=open;dashed=1;html=1;" target="c31" value=""><mxGeometry relative="1" as="geometry" /></mxCell>
+</root>
     </mxGraphModel>
   </diagram>
 </mxfile>

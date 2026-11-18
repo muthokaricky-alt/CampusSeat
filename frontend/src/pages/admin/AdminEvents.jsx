@@ -6,8 +6,9 @@ import { useToast } from '../../context/ToastContext.jsx';
 import { Alert, ConfirmDialog, Field, Modal, useDebounced } from '../../components/ui.jsx';
 import { SortHeader, TableFooter, TableSkeleton, listState } from '../../components/admin/DataTable.jsx';
 import { fmtDate, fmtTime, today } from '../../lib/format.js';
+import { CATEGORIES, categoryOf } from '../../lib/categories.js';
 
-const blank = { title: '', description: '', venue: '', event_date: '', start_time: '', end_time: '', capacity: '', restrict: false, school_ids: [] };
+const blank = { title: '', category: 'other', description: '', venue: '', event_date: '', start_time: '', end_time: '', capacity: '', restrict: false, school_ids: [] };
 
 export default function AdminEvents() {
   const toast = useToast();
@@ -50,7 +51,7 @@ export default function AdminEvents() {
 
   const open = (e) => {
     setErrors({}); setFormError('');
-    setEditing(e ? { id: e.event_id, title: e.title, description: e.description || '', venue: e.venue, event_date: e.event_date.slice(0, 10),
+    setEditing(e ? { id: e.event_id, title: e.title, category: e.category || 'other', description: e.description || '', venue: e.venue, event_date: e.event_date.slice(0, 10),
       start_time: fmtTime(e.start_time), end_time: fmtTime(e.end_time), capacity: String(e.capacity), restrict: e.school_ids.length > 0, school_ids: e.school_ids } : { ...blank });
   };
   const set = (k) => (ev) => setEditing({ ...editing, [k]: ev.target.value });
@@ -59,7 +60,7 @@ export default function AdminEvents() {
   const save = async (ev) => {
     ev.preventDefault(); setErrors({}); setFormError('');
     if (editing.restrict && editing.school_ids.length === 0) { setErrors({ school_ids: 'Choose at least one school, or select Everyone.' }); return; }
-    const body = { title: editing.title, description: editing.description, venue: editing.venue, event_date: editing.event_date,
+    const body = { title: editing.title, category: editing.category, description: editing.description, venue: editing.venue, event_date: editing.event_date,
       start_time: editing.start_time, end_time: editing.end_time, capacity: Number(editing.capacity), school_ids: editing.restrict ? editing.school_ids : [] };
     setBusy(true);
     try {
@@ -113,7 +114,7 @@ export default function AdminEvents() {
                 const [label, tone] = status(e);
                 return (
                   <tr key={e.event_id} className={e.is_past ? 'row-dim' : ''}>
-                    <td><strong>{e.title}</strong><br /><span className="muted small">{e.venue}</span></td>
+                    <td><strong>{e.title}</strong><br /><span className="muted small">{categoryOf(e.category).label} · {e.venue}</span></td>
                     <td className="nowrap">{fmtDate(e.event_date, { day: 'numeric', month: 'short', year: 'numeric' })}<br /><span className="muted small">{fmtTime(e.start_time)} to {fmtTime(e.end_time)}</span></td>
                     <td><span className={`badge ${tone}`}>{label}</span>{e.waitlist_count > 0 && <><br /><span className="small muted">{e.waitlist_count} waiting</span></>}</td>
                     <td className="seats-cell">
@@ -141,6 +142,10 @@ export default function AdminEvents() {
           <form id="event-form" onSubmit={save} noValidate>
             {formError && <Alert>{formError}</Alert>}
             <Field label="Title" error={errors.title}>{(p) => <input {...p} value={editing.title} onChange={set('title')} />}</Field>
+            <Field label="Category" error={errors.category} hint="Sets the colour and cover art, and lets people filter by type.">{(p) => (
+              <select {...p} value={editing.category} onChange={set('category')}>
+                {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+              </select>)}</Field>
             <Field label="Description" error={errors.description}>{(p) => <textarea {...p} value={editing.description} onChange={set('description')} />}</Field>
             <div className="grid-2">
               <Field label="Venue" error={errors.venue}>{(p) => <input {...p} value={editing.venue} onChange={set('venue')} />}</Field>

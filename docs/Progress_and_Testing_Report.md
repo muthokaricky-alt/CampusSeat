@@ -80,3 +80,30 @@ Run end to end in Chromium against the running system on 23 Oct 2026. No unexpec
 - Not tested: heavy load with many hundreds of users, and very old browsers.
 
 Deployment: use one Node host (for example Render or Railway) plus a managed MySQL database. Set the same values as .env (database host, user, password, a new JWT_SECRET, NODE_ENV=production), run the schema file once, run npm run seed once, build the frontend and start the backend. The backend serves the built site, so there is one address to share. If hosting is not possible, demonstrate from a laptop with the Windows steps in the README.
+
+## 6. Update, 18 Nov 2026: production hardening and new features
+
+Since this report was first written, CampusSeat moved to cookie sessions with CSRF protection, emailed reset links, account lockout, optional two-factor login for admins, a waitlist, a full audit trail, numbered database migrations and UTC time storage. The latest work adds door check-in with attendance, event types with cover art, saved events, self-service profile editing and offline tickets (FR6 to FR10 in the Requirements).
+
+**Automated tests:** `npm test` now runs 258 checks against the API and a MySQL 8 database, with 258 passed and 0 failed. New areas include:
+- check-in: correct ref, loose spelling, wrong event, outside the window, a used card, two simultaneous scans of one card (exactly one succeeds), undo, the attended filters, and attendance in reports and on the dashboard;
+- event types: filters, validation, and the category kept on edit;
+- saved events: save, unsave, the saved filter, and anonymous users refused;
+- profile: name change, password needed for identity fields, duplicate student number, the school lock while bookings are held, and audit entries;
+- the offline service worker and the app manifest are served correctly.
+
+**Browser test cases run on 18 Nov 2026** (local production build, Chrome):
+
+| ID | Scenario | Steps | Expected result | Result |
+| --- | --- | --- | --- | --- |
+| T18 | Event types | Open Events | Cards show the type's colour, icon and cover art; type chips filter the list | Pass |
+| T19 | Event page banner | Open an event | Banner with cover art, type, title, date and Save for later | Pass |
+| T20 | Check-in, typed loosely | Admin > Check-in, type `cs 2026 393`, press Enter | Green "Checked in" with name, school and reference; counter goes to 1 of 1 | Pass |
+| T21 | Card used twice | Enter the same reference again | Amber "Already checked in" with the time and who scanned it | Pass |
+| T22 | Ticket offline | Open My bookings, stop the server, reload | Registration card and QR code still open | Pass |
+| T23 | Profile identity change | Account > Your details, change the student number | Password box appears with the reason; Save stays available only once something changed | Pass |
+
+Wrong-event, outside-the-window and undo results at the door are covered by the automated tests above.
+
+**Resolved limitations from section 5:** forgot password now sends a single-use emailed link; two-factor login is available for admins.
+

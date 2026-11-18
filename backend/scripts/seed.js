@@ -29,17 +29,18 @@ if (n === 0) {
   // Event dates and times are Nairobi wall-clock; starts_at/ends_at hold the UTC instants.
   const day = (plus) => { const d = new Date(`${localToday()}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + plus); return d.toISOString().slice(0, 10); };
   const events = [
-    ['Career Fair 2026', 'Meet employers hiring graduates and interns. Bring copies of your CV.', 'Main Hall', 5, '09:00', '16:00', 100, []],
-    ['AI Research Symposium', 'Student research talks, a panel discussion and a poster session on applied AI.', 'Auditorium B', 8, '14:00', '17:00', 60, [id(schools[0])]],
-    ['Entrepreneurship Talk', 'Founders share lessons from building their first business on campus.', 'Lecture Hall 3', 11, '10:00', '12:00', 120, []],
-    ['Moot Court Finals', 'Final round of the inter-class moot court competition.', 'Moot Court', 14, '13:00', '16:00', 40, [id(schools[3])]],
-    ['Finance and Markets Workshop', 'Hands-on workshop on reading financial statements.', 'Seminar Room 2', 18, '15:00', '17:30', 30, [id(schools[1]), id(schools[5])]],
-    ['Open Mic Night', 'Poetry, music and comedy by students. Everyone welcome.', 'Atrium', 21, '18:00', '21:00', 3, []],
+    ['Career Fair 2026', 'Meet employers hiring graduates and interns. Bring copies of your CV.', 'Main Hall', 5, '09:00', '16:00', 100, [], 'career'],
+    ['AI Research Symposium', 'Student research talks, a panel discussion and a poster session on applied AI.', 'Auditorium B', 8, '14:00', '17:00', 60, [id(schools[0])], 'academic'],
+    ['Entrepreneurship Talk', 'Founders share lessons from building their first business on campus.', 'Lecture Hall 3', 11, '10:00', '12:00', 120, [], 'talk'],
+    ['Moot Court Finals', 'Final round of the inter-class moot court competition.', 'Moot Court', 14, '13:00', '16:00', 40, [id(schools[3])], 'academic'],
+    ['Finance and Markets Workshop', 'Hands-on workshop on reading financial statements.', 'Seminar Room 2', 18, '15:00', '17:30', 30, [id(schools[1]), id(schools[5])], 'workshop'],
+    ['Open Mic Night', 'Poetry, music and comedy by students. Everyone welcome.', 'Atrium', 21, '18:00', '21:00', 3, [], 'social'],
+    ['Inter-School Football Final', 'Computing take on the Business School for the campus cup. Free entry, seats in the stand.', 'Sports Ground', 9, '16:00', '18:00', 150, [], 'sports'],
   ];
-  for (const [t, d, v, plus, st, en, cap, ids] of events) {
+  for (const [t, d, v, plus, st, en, cap, ids, cat] of events) {
     const [r] = await pool.execute(
-      'INSERT INTO events (title, description, venue, event_date, start_time, end_time, starts_at, ends_at, capacity, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)',
-      [t, d, v, day(plus), st, en, zonedToSqlUtc(day(plus), st), zonedToSqlUtc(day(plus), en), cap, adminId]);
+      'INSERT INTO events (title, category, description, venue, event_date, start_time, end_time, starts_at, ends_at, capacity, created_by) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+      [t, cat, d, v, day(plus), st, en, zonedToSqlUtc(day(plus), st), zonedToSqlUtc(day(plus), en), cap, adminId]);
     for (const sid of ids) await pool.execute('INSERT INTO event_schools (event_id, school_id) VALUES (?, ?)', [r.insertId, sid]);
   }
 }

@@ -1,7 +1,11 @@
-// Event card: a ticket. The date is the stub; the details and the one action sit on the right.
+// Event card: still a ticket (perforated edge and notches), now led by generated cover art in the
+// event's category colour, with the date as a tab, a save toggle and one clear action.
 import { Link } from 'react-router-dom';
 import { MapPin, Clock, Users, CheckCircle2, ArrowRight, Hourglass } from 'lucide-react';
 import { fmtTime } from '../lib/format.js';
+import { categoryOf } from '../lib/categories.js';
+import CoverArt from './CoverArt.jsx';
+import SaveButton from './SaveButton.jsx';
 
 export function SeatMeter({ booked, capacity, live }) {
   const left = Math.max(0, capacity - booked);
@@ -20,7 +24,7 @@ export function SeatMeter({ booked, capacity, live }) {
 
 export const restrictionLabel = (e) => (e.restricted_to?.length ? e.restricted_to.join(', ') : 'Open to everyone');
 
-/** What the person can do with this event, in priority order. Returns { label, tone, icon }. */
+/** What the person can do with this event, in priority order. */
 function actionFor(e) {
   if (e.is_past) return { label: 'Ended', tone: 'muted' };
   if (e.my_booking) return { label: 'You have a seat', tone: 'ok', icon: CheckCircle2 };
@@ -35,31 +39,38 @@ export default function EventCard({ event: e }) {
   const a = actionFor(e);
   const Icon = a.icon;
   const isCta = a.tone === 'cta' || a.tone === 'cta-quiet';
+  const cat = categoryOf(e.category);
+  const longDate = d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' });
   return (
-    <article className={`ticket ${e.is_past ? 'dim' : ''}`} data-reveal>
-      <div className="stub" aria-hidden>
-        <span className="wk">{d.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' })}</span>
-        <span className="day">{d.getUTCDate()}</span>
-        <span className="mon">{d.toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' })}</span>
+    <article className={`ticket2 ${e.is_past ? 'dim' : ''}`} data-reveal>
+      <div className="t2-art">
+        <CoverArt category={e.category} seed={e.event_id} />
+        <span className="t2-cat"><cat.icon size={13} aria-hidden />{cat.label}</span>
+        <SaveButton event={e} />
+        <span className="t2-date" aria-hidden>
+          <span className="wk">{d.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' })}</span>
+          <span className="day">{d.getUTCDate()}</span>
+          <span className="mon">{d.toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' })}</span>
+        </span>
       </div>
-      <div className="body">
-        <h3><Link to={`/events/${e.event_id}`}>{e.title}<span className="sr-only">, {d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })}</span></Link></h3>
+      <div className="t2-body">
+        <h3><Link to={`/events/${e.event_id}`}>{e.title}<span className="sr-only">, {cat.label}, {longDate}</span></Link></h3>
         <div className="meta">
           <span><Clock size={15} aria-hidden /><span className="sr-only">Time: </span>{fmtTime(e.start_time)} to {fmtTime(e.end_time)}</span>
           <span><MapPin size={15} aria-hidden /><span className="sr-only">Venue: </span>{e.venue}</span>
           <span><Users size={15} aria-hidden /><span className="sr-only">Open to: </span>{restrictionLabel(e)}</span>
         </div>
         <SeatMeter booked={e.booked} capacity={e.capacity} />
-        <div className="foot">
-          {isCta ? (
-            <Link className={`card-cta ${a.tone === 'cta-quiet' ? 'quiet' : ''}`} to={`/events/${e.event_id}#book`} aria-label={`${a.label}: ${e.title}`}>
-              {a.label}{Icon && <Icon size={16} aria-hidden />}
-            </Link>
-          ) : (
-            <span className={`badge ${a.tone === 'muted' ? '' : a.tone}`}>{Icon && <Icon size={14} aria-hidden />}{a.label}</span>
-          )}
-          {e.waitlist_count > 0 && !e.my_waitlist && <span className="small muted">{e.waitlist_count} waiting</span>}
-        </div>
+      </div>
+      <div className="t2-foot">
+        {isCta ? (
+          <Link className={`card-cta ${a.tone === 'cta-quiet' ? 'quiet' : ''}`} to={`/events/${e.event_id}#book`} aria-label={`${a.label}: ${e.title}`}>
+            {a.label}{Icon && <Icon size={16} aria-hidden />}
+          </Link>
+        ) : (
+          <span className={`badge ${a.tone === 'muted' ? '' : a.tone}`}>{Icon && <Icon size={14} aria-hidden />}{a.label}</span>
+        )}
+        {e.waitlist_count > 0 && !e.my_waitlist && <span className="small muted">{e.waitlist_count} waiting</span>}
       </div>
     </article>
   );

@@ -1,8 +1,9 @@
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { Armchair, Moon, Sun, LogOut, LayoutDashboard, CalendarDays, Ticket, Users, BarChart3, ScrollText, CircleHelp } from 'lucide-react';
+import { Armchair, Moon, Sun, LogOut, LayoutDashboard, CalendarDays, Ticket, Users, BarChart3, ScrollText, ScanLine, CircleHelp } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { Suspense, useEffect, useState } from 'react';
+import { WifiOff } from 'lucide-react';
 import { PageSkeleton } from './ui.jsx';
 
 function ThemeToggle() {
@@ -54,10 +55,23 @@ export function TopBar() {
   );
 }
 
+/** Shown while the device is offline: saved tickets still open, other pages need a connection. */
+function OfflineBanner() {
+  const [offline, setOffline] = useState(typeof navigator !== 'undefined' && navigator.onLine === false);
+  useEffect(() => {
+    const on = () => setOffline(false); const off = () => setOffline(true);
+    window.addEventListener('online', on); window.addEventListener('offline', off);
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+  }, []);
+  if (!offline) return null;
+  return <div className="offline-banner" role="status"><WifiOff size={16} aria-hidden />You are offline. Your saved tickets in My bookings still open.</div>;
+}
+
 export function Shell() {
   return (
     <>
       <a className="skip-link" href="#main">Skip to content</a>
+      <OfflineBanner />
       <TopBar />
       <main id="main" tabIndex={-1}><Suspense fallback={<PageSkeleton />}><Outlet /></Suspense></main>
       <footer className="footer"><div className="container">CampusSeat. Book your seat at campus events.</div></footer>
@@ -68,7 +82,7 @@ export function Shell() {
 // Grouped so the six destinations read as three small sets (easier to scan than one list).
 const groups = [
   ['Overview', [['/admin', 'Dashboard', LayoutDashboard, true]]],
-  ['Manage', [['/admin/events', 'Events', CalendarDays], ['/admin/bookings', 'Bookings', Ticket], ['/admin/users', 'Users', Users]]],
+  ['Manage', [['/admin/check-in', 'Check-in', ScanLine], ['/admin/events', 'Events', CalendarDays], ['/admin/bookings', 'Bookings', Ticket], ['/admin/users', 'Users', Users]]],
   ['Records', [['/admin/reports', 'Reports', BarChart3], ['/admin/audit', 'Audit logs', ScrollText]]],
 ];
 export function AdminLayout() {

@@ -20,6 +20,7 @@ import bookingRoutes from './routes/bookings.js';
 import adminRoutes from './routes/admin.js';
 import accountRoutes from './routes/account.js';
 import auditRoutes from './routes/audit.js';
+import checkinRoutes from './routes/checkin.js';
 
 export function createApp() {
   const app = express();
@@ -46,6 +47,7 @@ export function createApp() {
   app.use('/api/events', eventRoutes);
   app.use('/api/bookings', bookingRoutes);
   app.use('/api/admin', auditRoutes);
+  app.use('/api/admin', checkinRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api', (_req, _res, next) => next(new AppError(404, 'NOT_FOUND', 'Endpoint not found.')));
 

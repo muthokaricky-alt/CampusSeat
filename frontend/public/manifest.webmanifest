@@ -1,0 +1,13 @@
+{
+  "name": "CampusSeat",
+  "short_name": "CampusSeat",
+  "description": "Find campus events, book a seat in one tap, and keep your ticket on your phone, even offline.",
+  "start_url": "/my-bookings",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0f1e",
+  "theme_color": "#0e1a3d",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

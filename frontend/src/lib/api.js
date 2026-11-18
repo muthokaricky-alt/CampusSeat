@@ -8,7 +8,8 @@ export const setCsrfToken = (t) => { csrfToken = t || null; };
 try { localStorage.removeItem('campusseat_token'); } catch { /* storage unavailable */ }
 
 export class ApiError extends Error {
-  constructor(status, code, message, field) { super(message); this.status = status; this.code = code; this.field = field; }
+  // `data` is the whole error body (e.g. the person behind an already-used ticket).
+  constructor(status, code, message, field, data = {}) { super(message); this.status = status; this.code = code; this.field = field; this.data = data; }
 }
 let onUnauthorized = () => {};
 export const setUnauthorizedHandler = (fn) => { onUnauthorized = fn; };
@@ -37,7 +38,7 @@ async function request(method, path, body, { raw = false, retried = false } = {}
       if (s.csrf_token) { setCsrfToken(s.csrf_token); return request(method, path, body, { raw, retried: true }); }
     }
     if (res.status === 401 && e.code === 'SESSION_EXPIRED') onUnauthorized();
-    throw new ApiError(res.status, e.code || 'ERROR', e.message || 'Something went wrong. Please try again.', e.field);
+    throw new ApiError(res.status, e.code || 'ERROR', e.message || 'Something went wrong. Please try again.', e.field, e);
   }
   return raw ? res : res.json();
 }

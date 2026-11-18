@@ -1,0 +1,32 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css"><style>
+.card { border: 1px solid #888; border-radius: 4px; overflow: hidden; }
+.card .x { height: 62px; justify-content: space-between; }
+.card .tag { background: #fff; border: 1px solid #888; border-radius: 9px; padding: 1px 7px; font-size: 9.5px; }
+.card .save { background: #fff; border: 1px solid #888; border-radius: 50%; width: 20px; height: 20px; text-align: center; line-height: 18px; font-size: 10px; }
+.card .body { padding: 8px; }
+.card .date { border: 1px solid #888; background: #fff; width: 34px; text-align: center; margin: -22px 0 6px; padding: 2px 0; font-size: 9px; line-height: 1.2; }
+.card .date b { font-size: 13px; display: block; }
+.meter { height: 5px; background: #eee; border: 1px solid #aaa; margin: 4px 0 8px; }
+.meter i { display: block; height: 100%; background: #6a9; }
+</style></head><body><div class="frame">
+<div class="bar"><b>CampusSeat</b><nav><span>Events</span><span>My bookings</span><span>Help</span><span>Kyalo R. &#9662;</span></nav></div>
+<div class="page">
+  <h1>Find an event. Take a seat.</h1>
+  <div class="field">Search by title, venue or topic</div>
+  <div><span class="chip on">All upcoming</span><span class="chip">This week</span><span class="chip">Seats left</span><span class="chip">&#9733; Saved</span><span class="chip">Dates</span></div>
+  <div><span class="chip">Careers</span><span class="chip on">Workshops</span><span class="chip">Talks</span><span class="chip">Academic</span><span class="chip">Social</span><span class="chip">Sports</span><span class="chip">Other</span>
+  <span style="color:#666;font-size:9.5px">&larr; event types: tap several to combine</span></div>
+  <h2>This week</h2>
+  <div class="grid" style="grid-template-columns:repeat(3,1fr)">
+    <div class="card"><div class="x"><span class="tag">Workshop</span><span class="save">&#9734;</span></div><div class="body">
+      <div class="date">THU<b>20</b>NOV</div><b>Finance and Markets Workshop</b><div style="color:#555;margin-top:3px">15:00 to 17:30 &middot; Seminar Room 2</div>
+      <div style="margin-top:5px;font-size:9.5px">12 seats left</div><div class="meter"><i style="width:60%"></i></div><span class="btn">Reserve a seat &rarr;</span></div></div>
+    <div class="card"><div class="x"><span class="tag">Workshop</span><span class="save">&#9733;</span></div><div class="body">
+      <div class="date">FRI<b>21</b>NOV</div><b>CV Clinic</b><div style="color:#555;margin-top:3px">10:00 to 12:00 &middot; Library Lab</div>
+      <div style="margin-top:5px;font-size:9.5px">Full &middot; 3 waiting</div><div class="meter"><i style="width:100%;background:#c66"></i></div><span class="btn ghost">Join the waitlist</span></div></div>
+    <div class="card"><div class="x"><span class="tag">Workshop</span><span class="save">&#9734;</span></div><div class="body">
+      <div class="date">SAT<b>22</b>NOV</div><b>Intro to Robotics</b><div style="color:#555;margin-top:3px">09:00 to 13:00 &middot; Lab 4</div>
+      <div style="margin-top:5px;font-size:9.5px">25 seats left</div><div class="meter"><i style="width:15%"></i></div><span class="btn">Reserve a seat &rarr;</span></div></div>
+  </div>
+  <div class="note">The striped area is generated cover art: each event type has its own colour, pattern and icon. The star saves the event for later (it does not hold a seat).</div>
+</div></div></body></html>

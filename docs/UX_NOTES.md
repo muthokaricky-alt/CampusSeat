@@ -68,8 +68,25 @@ Before Phase 3: Performance 78, Accessibility 100, Best Practices 100, SEO 91.
 Sortable headers expose `aria-sort`; list state (filters, sort, page, rows) lives in the URL so views can be bookmarked.
 Scrolling table boxes are `position: relative`, so screen-reader-only labels inside them cannot widen the page on phones.
 
+## Check-in, categories and self-service
+
+| Principle | Where | How |
+| --- | --- | --- |
+| Recognition over recall | `lib/categories.js`, `components/CoverArt.jsx` | Each event type has its own colour, icon and generated cover pattern, so people spot "a workshop" before reading the title. White text on every category colour is at least 6.1:1. |
+| Not colour alone | Category chip, check-in result | Chips carry the type's name and icon; the door result says "Checked in" / "Already checked in" / the reason, with an icon, not just green, amber or red. |
+| Fitts's law | `pages/admin/CheckIn.jsx` | One large reference box that keeps focus, Enter submits, and a barcode scanner (which types and presses Enter) works with no setup. Big result panel readable at arm's length. |
+| Postel's law | Check-in reference | `cs 2026 393`, `CS202600393` and `CS-2026-00393` are all accepted. |
+| Feedback | Check-in | Result announced to screen readers (`aria-live="assertive"`), a short vibration on phones, and a running "x of y in" counter. |
+| Error recovery | Check-in recent list | Every check-in can be undone, and undoing is recorded in the audit log. |
+| Progressive disclosure | Account > Your details | The password box appears only when the student number or school changes; fixing a typo in a name is one step. |
+| Offline first (at the door) | `public/sw.js`, offline banner | Tickets and QR codes are kept on the phone after My bookings is opened once, so a card opens with no signal. Only GET requests are cached; personal copies are cleared on logout. |
+| Low commitment | Save button on cards and the event page | Saving is optimistic and reversible, and says clearly that it does not hold a seat. |
+
+The camera scanner uses the browser's `BarcodeDetector` where it exists and loads `jsQR` (Apache-2.0, 47 kB gzip) only on devices without it, such as iPhones. Nothing from it runs on pages other than Check-in.
+
 ## Third-party code
 
 - React Bits ClickSpark, copied as source into `src/components/reactbits/` with its licence (MIT + Commons Clause: free to use inside an application).
 - 21st.dev: "Stat Card" by aadixc0de (from chatcn, chatcn.dev) and "Data Table" by ephraimduncan, retrieved with the 21st plugin and rebuilt on CampusSeat's CSS tokens (no Tailwind, Radix or TanStack Table added): `src/components/admin/StatCard.jsx`, `src/components/admin/DataTable.jsx`.
+- jsQR 1.4.0 (Apache-2.0), lazy-loaded on the check-in page only.
 - GSAP 3.15.1, Lenis 1.3.27, Vanta 0.5.24 with three.js 0.134.0 (the last three.js line Vanta supports), pinned exactly.

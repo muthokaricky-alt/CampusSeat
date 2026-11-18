@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { KeyRound, LogOut, ShieldCheck, ShieldOff } from 'lucide-react';
+import { IdCard, KeyRound, LogOut, ShieldCheck, ShieldOff } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
@@ -82,6 +82,45 @@ function TwoFactor() {
   );
 }
 
+function ProfileSection() {
+  const { user, refresh } = useAuth();
+  const toast = useToast();
+  const [schools, setSchools] = useState([]);
+  useEffect(() => { api.get('/schools').then((r) => setSchools(r.schools)).catch(() => {}); }, []);
+  const f = useForm({ full_name: user.full_name, student_number: user.student_number, school_id: String(user.school_id), password: '' });
+  const v = f.values;
+  // Student number and school are institutional identity: only those need the password.
+  const identityChanged = v.student_number.trim().toUpperCase() !== String(user.student_number).toUpperCase() || v.school_id !== String(user.school_id);
+  const changed = identityChanged || v.full_name.trim().replace(/\s+/g, ' ') !== user.full_name;
+  const save = f.run(async () => {
+    const r = await api.patch('/account/profile', {
+      full_name: v.full_name, student_number: v.student_number, school_id: Number(v.school_id), ...(identityChanged ? { password: v.password } : {}),
+    });
+    await refresh();
+    f.setValues((x) => ({ ...x, password: '' }));
+    toast.ok(r.changed.length ? 'Your details are updated.' : 'Nothing to change.');
+  });
+  return (
+    <form className="stack" noValidate onSubmit={save}>
+      {f.formError && <Alert>{f.formError}</Alert>}
+      <Field label="Full name" error={f.errors.full_name} hint="As it should appear on your registration card.">{(p) => <input {...p} autoComplete="name" value={v.full_name} onChange={f.set('full_name')} />}</Field>
+      <div className="grid-2">
+        <Field label="Student or staff number" error={f.errors.student_number}>{(p) => <input {...p} autoCapitalize="characters" value={v.student_number} onChange={f.set('student_number')} />}</Field>
+        <Field label="School" error={f.errors.school_id}>{(p) => (
+          <select {...p} value={v.school_id} onChange={f.set('school_id')}>
+            {schools.map((s) => <option key={s.school_id} value={s.school_id}>{s.school_name}</option>)}
+          </select>)}</Field>
+      </div>
+      {identityChanged && (
+        <Field label="Confirm with your password" error={f.errors.password} hint="Needed to change your student number or school. Your school can only change when you have no upcoming bookings.">
+          {(p) => <input {...p} type="password" autoComplete="current-password" value={v.password} onChange={f.set('password')} />}
+        </Field>
+      )}
+      <div><button className="btn" disabled={f.busy || !changed}>{f.busy ? 'Saving…' : 'Save details'}</button></div>
+    </form>
+  );
+}
+
 export default function Security() {
   const { user, logoutEverywhere } = useAuth();
   const toast = useToast();
@@ -96,6 +135,10 @@ export default function Security() {
   return (
     <div className="container page narrow">
       <div className="page-head"><h1>Account and security</h1><p>{user.full_name} · {user.email}</p></div>
+      <section className="card stack">
+        <h2><IdCard size={20} aria-hidden style={{ verticalAlign: '-3px' }} /> Your details</h2>
+        <ProfileSection />
+      </section>
       <section className="card stack">
         <h2><KeyRound size={20} aria-hidden style={{ verticalAlign: '-3px' }} /> Change password</h2>
         {pw.formError && <Alert>{pw.formError}</Alert>}
