@@ -116,7 +116,16 @@ export function buildReport(res, { title, filters = [], columns, rows, totals = 
   doc.end();
 }
 
+/**
+ * CSV with formula-injection protection: a cell starting with = + - @ (or tab / carriage return)
+ * would run as a formula in Excel or Sheets, so it gets a leading apostrophe and stays text.
+ * Numbers are left alone so negative values still work as numbers.
+ */
 export const toCsv = (columns, rows) => {
-  const esc = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const esc = (v) => {
+    let s = String(v ?? '');
+    if (typeof v !== 'number' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
   return [columns.map((c) => esc(c.label)).join(','), ...rows.map((r) => columns.map((c) => esc(r[c.key])).join(','))].join('\n');
 };
