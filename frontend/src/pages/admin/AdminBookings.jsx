@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Download, XCircle } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useToast } from '../../context/ToastContext.jsx';
-import { Alert, ConfirmDialog, Empty, Spinner, useDebounced } from '../../components/ui.jsx';
+import { Alert, ConfirmDialog, Empty, Pager, Spinner, useDebounced } from '../../components/ui.jsx';
 import { fmtDate, fmtDateTime } from '../../lib/format.js';
 
 export default function AdminBookings() {
@@ -11,15 +11,18 @@ export default function AdminBookings() {
   const [eventId, setEventId] = useState('');
   const [q, setQ] = useState('');
   const [rows, setRows] = useState(null);
+  const [meta, setMeta] = useState(null);
+  const [page, setPage] = useState(1);
   const [error, setError] = useState('');
   const [cancelling, setCancelling] = useState(null);
   const search = useDebounced(q);
-  useEffect(() => { api.get('/events?past=1').then((r) => setEvents(r.events)); }, []);
+  useEffect(() => { api.get('/admin/event-options').then((r) => setEvents(r.events)).catch(() => {}); }, []);
   const load = () => {
-    const p = new URLSearchParams(); if (eventId) p.set('event_id', eventId); if (search) p.set('search', search);
-    return api.get(`/bookings?${p}`).then((r) => { setRows(r.bookings); setError(''); }).catch((e) => setError(e.message));
+    const p = new URLSearchParams({ page, limit: 50 }); if (eventId) p.set('event_id', eventId); if (search) p.set('search', search);
+    return api.get(`/bookings?${p}`).then((r) => { setRows(r.bookings); setMeta(r.meta); setError(''); }).catch((e) => setError(e.message));
   };
-  useEffect(() => { load(); }, [eventId, search]);
+  useEffect(() => { setPage(1); }, [eventId, search]);
+  useEffect(() => { load(); }, [eventId, search, page]);
   const cancel = async () => {
     try { await api.del(`/bookings/${cancelling.booking_id}`); toast.ok('Booking cancelled. The seat is available again.'); setCancelling(null); load(); }
     catch (e) { toast.error(e.message); setCancelling(null); }
@@ -54,6 +57,7 @@ export default function AdminBookings() {
             </tr>))}</tbody>
         </table></div>
       )}
+      {meta && meta.total > meta.limit && <Pager page={meta.page} total={meta.total} limit={meta.limit} onPage={setPage} />}
       <ConfirmDialog open={!!cancelling} danger title="Cancel this booking?" confirmLabel="Cancel booking" onClose={() => setCancelling(null)} onConfirm={cancel}
         message={cancelling ? `${cancelling.full_name}'s seat for "${cancelling.title}" (${cancelling.booking_ref}) will be released.` : ''} />
     </div>

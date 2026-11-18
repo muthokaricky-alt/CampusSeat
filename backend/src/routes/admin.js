@@ -9,6 +9,7 @@ import { requireAdmin } from '../middleware/auth.js';
 import { revokeUserSessions } from '../sessions.js';
 import { unlock } from '../lockout.js';
 import { issueReset } from '../passwordReset.js';
+import { listParams } from '../utils/list.js';
 import { buildReport, toCsv } from '../utils/pdf.js';
 import { isoFields, localDayRangeUtc, localToday, offsetString, sqlToLocal } from '../utils/time.js';
 
@@ -43,6 +44,12 @@ router.get('/stats', asyncHandler(async (_req, res) => {
   res.json({ totals: num(totals), almost_full: almostFull.map((r) => ({ ...r, booked: Number(r.booked) })), recent: recent.map((r) => isoFields(r)), per_day: perDay.map((r) => ({ day: r.day, n: Number(r.n) })) });
 }));
 
+/* ---------- Event picker for admin filters (id, title, date of every event, newest first) ---------- */
+router.get('/event-options', asyncHandler(async (_req, res) => {
+  const events = await query('SELECT event_id, title, event_date FROM events ORDER BY starts_at DESC, event_id DESC LIMIT 2000');
+  res.json({ events, meta: { page: 1, limit: 2000, total: events.length, pages: 1, sort: 'date', dir: 'desc' } });
+}));
+
 /* ---------- Users ---------- */
 router.get('/users', asyncHandler(async (req, res) => {
   const params = []; let where = '';
@@ -50,12 +57,20 @@ router.get('/users', asyncHandler(async (req, res) => {
     const p = v.likePattern(String(req.query.search).slice(0, 100));
     where = 'WHERE u.full_name LIKE ? OR u.email LIKE ? OR u.student_number LIKE ?'; params.push(p, p, p);
   }
+  const lp = listParams(req.query, {
+    sorts: { created: 'u.created_at', name: 'u.full_name', email: 'u.email', bookings: 'bookings', role: 'u.role' },
+    defaultSort: 'created', defaultDir: 'desc', tiebreak: 'u.user_id',
+  });
+  const [{ total }] = await query(`SELECT COUNT(*) AS total FROM users u ${where}`, params);
   const users = await query(`
     SELECT u.user_id, u.full_name, u.student_number, u.email, u.role, u.created_at, s.school_name,
-           IF(u.locked_until > UTC_TIMESTAMP(), u.locked_until, NULL) AS locked_until,
+           IF(u.locked_until > UTC_TIMESTAMP(), u.locked_until, NULL) AS locked_until, (u.totp_enabled_at IS NOT NULL) AS two_factor,
            (SELECT COUNT(*) FROM bookings b WHERE b.user_id = u.user_id) AS bookings
-    FROM users u JOIN schools s ON s.school_id = u.school_id ${where} ORDER BY u.created_at DESC LIMIT 500`, params);
-  res.json({ users: users.map((u) => isoFields({ ...u, bookings: Number(u.bookings) }, ['created_at', 'locked_until'])) });
+    FROM users u JOIN schools s ON s.school_id = u.school_id ${where} ${lp.orderBy} ${lp.limitSql}`, params);
+  res.json({
+    users: users.map((u) => isoFields({ ...u, bookings: Number(u.bookings), two_factor: !!Number(u.two_factor) }, ['created_at', 'locked_until'])),
+    meta: lp.meta(total),
+  });
 }));
 
 router.patch('/users/:id', asyncHandler(async (req, res) => {
@@ -132,14 +147,12 @@ router.get('/audit-logs', asyncHandler(async (req, res) => {
   const range = localDayRangeUtc(req.query.from ? v.date(req.query.from, 'from') : null, req.query.to ? v.date(req.query.to, 'to') : null);
   if (range.start) { where.push('a.logged_at >= ?'); params.push(range.start); }
   if (range.end) { where.push('a.logged_at < ?'); params.push(range.end); }
-  const limit = Math.min(Number(req.query.limit) || 50, 200);
-  const page = Math.max(Number(req.query.page) || 1, 1);
+  const lp = listParams(req.query, { sorts: { time: 'a.logged_at', action: 'a.action' }, defaultSort: 'time', defaultDir: 'desc', tiebreak: 'a.log_id' });
   const base = `FROM audit_logs a LEFT JOIN users u ON u.user_id = a.user_id ${where.length ? 'WHERE ' + where.join(' AND ') : ''}`;
   const [{ total }] = await query(`SELECT COUNT(*) AS total ${base}`, params);
-  const logs = await query(
-    `SELECT a.log_id, a.action, a.details, a.logged_at, u.full_name, u.email ${base} ORDER BY a.logged_at DESC, a.log_id DESC LIMIT ${limit} OFFSET ${(page - 1) * limit}`, params);
+  const logs = await query(`SELECT a.log_id, a.action, a.details, a.logged_at, u.full_name, u.email ${base} ${lp.orderBy} ${lp.limitSql}`, params);
   const actions = (await query('SELECT DISTINCT action FROM audit_logs ORDER BY action')).map((r) => r.action);
-  res.json({ logs: logs.map((l) => isoFields(l)), total: Number(total), page, limit, actions });
+  res.json({ logs: logs.map((l) => isoFields(l)), meta: lp.meta(total), actions });
 }));
 
 /* ---------- Reports (PDF / CSV / JSON), with filtering and sorting ---------- */

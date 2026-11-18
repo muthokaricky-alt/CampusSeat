@@ -263,7 +263,7 @@ for (const fmt of ['pdf', 'csv', 'json']) {
 }
 ok((await call('GET', '/api/admin/reports/events?format=pdf', null, admin.token)).data.slice(0, 4).toString() === '%PDF', 'events summary report (pdf)');
 const logs = (await call('GET', '/api/admin/audit-logs?action=BOOK_SEAT', null, admin.token)).data;
-ok(logs.total >= 5 && logs.logs[0].full_name, 'audit log records who booked');
+ok(logs.meta.total >= 5 && logs.logs[0].full_name, 'audit log records who booked');
 const reset = await call('POST', `/api/admin/users/${u2.user.user_id}/reset-password`, null, admin.token);
 ok(/.{10,}/.test(reset.data.temporary_password || ''), 'admin resets a password');
 ok((await call('GET', '/api/auth/me', null, u2.token)).status === 401, "admin password reset logs the user out everywhere");
@@ -325,6 +325,36 @@ const del = await call('DELETE', `/api/events/${ev.event_id}`, null, admin.token
 ok(del.status === 200 && del.data.removed_bookings === 4, 'admin deletes event (bookings removed)');
 await call('DELETE', `/api/events/${evLaw.event_id}`, null, admin.token);
 ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted event is gone (404)');
+// --- lists: pagination, sorting, one response shape
+{
+  const extra = [];
+  for (let i = 0; i < 3; i++) extra.push((await call('POST', '/api/events', mk({ title: `Pager ${stamp} ${'CBA'[i]}`, capacity: 3 + i }), admin.token)).data.event);
+  const q = `search=${encodeURIComponent('Pager ' + stamp)}`;
+  const all = (await call('GET', `/api/events?${q}`)).data;
+  ok(all.meta && all.meta.total === 3 && all.meta.page === 1 && all.meta.limit === 50 && all.meta.pages === 1 && all.meta.sort === 'date', 'event list returns { events, meta } with defaults');
+  const p1 = (await call('GET', `/api/events?${q}&limit=2&page=1&sort=title`)).data;
+  const p2 = (await call('GET', `/api/events?${q}&limit=2&page=2&sort=title`)).data;
+  ok(p1.events.length === 2 && p2.events.length === 1 && p1.meta.pages === 2, 'events page 1 has 2, page 2 has the rest');
+  ok([...p1.events, ...p2.events].map((e) => e.title.slice(-1)).join('') === 'ABC', 'sort=title orders A to Z across pages');
+  ok((await call('GET', `/api/events?${q}&sort=title&dir=desc`)).data.events.map((e) => e.title.slice(-1)).join('') === 'CBA', 'dir=desc reverses the order');
+  ok((await call('GET', `/api/events?${q}&sort=drop table`)).data.error?.field === 'sort', 'unknown sort key is refused (400)');
+  const lenient = (await call('GET', `/api/events?${q}&limit=5000&page=abc`)).data.meta;
+  ok(lenient.limit === 100 && lenient.page === 1, 'bad page falls back to 1 and limit is capped at 100');
+  const ul = (await call('GET', '/api/admin/users?limit=2&sort=name&dir=asc', null, admin.token)).data;
+  ok(ul.users.length === 2 && ul.meta.total > 2 && ul.users[0].full_name <= ul.users[1].full_name, 'admin users list is paginated and sortable');
+  await book(u1, extra[0].event_id); await book(u2, extra[0].event_id);
+  const bl = (await call('GET', `/api/bookings?limit=1&event_id=${extra[0].event_id}`, null, admin.token)).data;
+  ok(bl.bookings.length === 1 && bl.meta.total === 2 && bl.meta.pages === 2, 'admin bookings list is paginated', JSON.stringify(bl.meta));
+  const mineOne = (await call('GET', `/api/bookings/mine?event_id=${extra[0].event_id}`, null, u1.token)).data;
+  ok(mineOne.bookings.length === 1 && mineOne.meta.total === 1, 'my bookings can be filtered to one event');
+  const al = (await call('GET', '/api/admin/audit-logs?limit=3', null, admin.token)).data;
+  ok(al.logs.length === 3 && al.meta.total > 3 && Array.isArray(al.actions), 'audit log list uses the same meta shape');
+  const opts = (await call('GET', '/api/admin/event-options', null, admin.token)).data;
+  ok(opts.events.some((e) => e.event_id === extra[0].event_id) && opts.meta.total === opts.events.length, 'admin event picker lists every event');
+  ok((await call('GET', '/api/admin/event-options', null, u1.token)).status === 403, 'event picker is admin only');
+  for (const e of extra) await call('DELETE', `/api/events/${e.event_id}`, null, admin.token);
+}
+
 // --- time zones: the database stores UTC, people work in Nairobi time (UTC+3)
 {
   const nbo = (d = new Date()) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
@@ -352,7 +382,7 @@ ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted ev
     const mineNow = (await call('GET', '/api/bookings/mine', null, u2.token)).data.bookings.find((b) => b.event_id === now1.event_id);
     ok(/Z$/.test(mineNow.booked_at) && Math.abs(new Date(mineNow.booked_at) - Date.now()) < 120e3, 'booked_at is returned as ISO UTC and matches the real time', mineNow.booked_at);
     const today1 = (await call('GET', `/api/admin/audit-logs?action=BOOK_SEAT&from=${todayNbo}&to=${todayNbo}&search=${encodeURIComponent('Now ' + stamp)}`, null, admin.token)).data;
-    ok(today1.total === 1, "audit date filter uses Nairobi days (today's booking is found)");
+    ok(today1.meta.total === 1, "audit date filter uses Nairobi days (today's booking is found)");
     await call('PUT', `/api/events/${now1.event_id}`, mk({ title: `Now ${stamp}`, event_date: todayNbo, start_time: startT, end_time: endGone }), admin.token);
     const gone = (await call('GET', `/api/events/${now1.event_id}`)).data.event;
     ok(gone.is_past === true, 'event that ended 1 minute ago (Nairobi) is past');
