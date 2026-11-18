@@ -9,7 +9,7 @@ export default function MyBookings() {
   const fresh = params.get('new');
   const [bookings, setBookings] = useState(null);
   const [error, setError] = useState('');
-  useEffect(() => { api.get('/bookings/mine').then((r) => setBookings(r.bookings)).catch((e) => setError(e.message)); }, []);
+  useEffect(() => { api.get('/bookings/mine?limit=100').then((r) => setBookings(r.bookings)).catch((e) => setError(e.message)); }, []);
   return (
     <div className="container page">
       <div className="page-head">

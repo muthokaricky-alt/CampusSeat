@@ -30,7 +30,7 @@ export default function EventDetail() {
     if (user) setForm({ full_name: user.full_name, student_number: user.student_number, school_id: String(user.school_id) });
   }, [user]);
   useEffect(() => {
-    if (event?.my_booking) api.get('/bookings/mine').then((r) => setMine(r.bookings.find((b) => b.event_id === event.event_id) || null));
+    if (event?.my_booking) api.get(`/bookings/mine?event_id=${event.event_id}`).then((r) => setMine(r.bookings[0] || null)).catch(() => {});
   }, [event?.my_booking?.booking_id]);
 
   const book = async (e) => {

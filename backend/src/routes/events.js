@@ -5,6 +5,7 @@ import * as v from '../utils/validate.js';
 import { audit } from '../utils/audit.js';
 import { optionalAuth, requireAdmin } from '../middleware/auth.js';
 import { isoFields, localToday, zonedToDate, toSqlUtc } from '../utils/time.js';
+import { listParams } from '../utils/list.js';
 
 const router = Router();
 
@@ -58,9 +59,14 @@ router.get('/', optionalAuth, asyncHandler(async (req, res) => {
     params.push(sid);
   }
   if (req.query.available === '1') where.push('e.capacity > (SELECT COUNT(*) FROM bookings b WHERE b.event_id = e.event_id)');
-  const sql = `${EVENT_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY e.event_date, e.start_time`;
-  const rows = (await query(sql, params)).map((r) => shape(r, req.user));
-  res.json({ events: await withMine(rows, req.user) });
+  const lp = listParams(req.query, {
+    sorts: { date: 'e.starts_at', title: 'e.title', seats: 'seats_remaining', created: 'e.created_at' },
+    defaultSort: 'date', tiebreak: 'e.event_id',
+  });
+  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  const [{ total }] = await query(`SELECT COUNT(*) AS total FROM events e ${whereSql}`, params);
+  const rows = (await query(`${EVENT_SELECT} ${whereSql} ${lp.orderBy} ${lp.limitSql}`, params)).map((r) => shape(r, req.user));
+  res.json({ events: await withMine(rows, req.user), meta: lp.meta(total) });
 }));
 
 router.get('/:id', optionalAuth, asyncHandler(async (req, res) => {

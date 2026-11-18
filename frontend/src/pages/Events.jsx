@@ -13,6 +13,8 @@ export default function Events() {
   const [onlyMine, setOnlyMine] = useState(false);
   const [available, setAvailable] = useState(false);
   const [events, setEvents] = useState(null);
+  const [meta, setMeta] = useState(null);
+  const [more, setMore] = useState(false);
   const [error, setError] = useState('');
   const search = useDebounced(q);
 
@@ -24,11 +26,19 @@ export default function Events() {
     if (onlyMine && user) p.set('school', user.school_id);
     if (available) p.set('available', '1');
     let live = true;
-    api.get(`/events?${p}`).then((r) => { if (live) { setEvents(r.events); setError(''); } })
+    api.get(`/events?${p}`).then((r) => { if (live) { setEvents(r.events); setMeta(r.meta); setError(''); } })
       .catch((e) => live && setError(e.message));
     return () => { live = false; };
   }, [search, from, to, onlyMine, available, user]);
 
+  const loadMore = async () => {
+    const p = new URLSearchParams();
+    if (search) p.set('search', search); if (from) p.set('from', from); if (to) p.set('to', to);
+    if (onlyMine && user) p.set('school', user.school_id); if (available) p.set('available', '1');
+    p.set('page', meta.page + 1);
+    setMore(true);
+    try { const r = await api.get(`/events?${p}`); setEvents((l) => [...l, ...r.events]); setMeta(r.meta); } catch (e) { setError(e.message); } finally { setMore(false); }
+  };
   const filtered = search || from || to || onlyMine || available;
   return (
     <div className="container page">
@@ -54,6 +64,11 @@ export default function Events() {
         </Empty>
       )}
       {events && events.length > 0 && <div className="ticket-grid">{events.map((e) => <EventCard key={e.event_id} event={e} />)}</div>}
+      {events && meta && events.length < meta.total && (
+        <div className="row" style={{ justifyContent: 'center', marginTop: '1.5rem' }}>
+          <button className="btn secondary" onClick={loadMore} disabled={more}>{more ? 'Loading…' : `Show more events (${meta.total - events.length} more)`}</button>
+        </div>
+      )}
     </div>
   );
 }

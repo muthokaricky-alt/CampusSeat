@@ -3,7 +3,7 @@ import { KeyRound, LockOpen, Mail, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useToast } from '../../context/ToastContext.jsx';
-import { Alert, ConfirmDialog, Empty, Modal, Spinner, useDebounced } from '../../components/ui.jsx';
+import { Alert, ConfirmDialog, Empty, Modal, Pager, Spinner, useDebounced } from '../../components/ui.jsx';
 import { fmtDate, fmtDateTime } from '../../lib/format.js';
 
 export default function AdminUsers() {
@@ -11,13 +11,19 @@ export default function AdminUsers() {
   const toast = useToast();
   const [q, setQ] = useState('');
   const [users, setUsers] = useState(null);
+  const [meta, setMeta] = useState(null);
+  const [page, setPage] = useState(1);
   const [error, setError] = useState('');
   const [resetFor, setResetFor] = useState(null);
   const [tempPw, setTempPw] = useState('');
   const [deleting, setDeleting] = useState(null);
   const search = useDebounced(q);
-  const load = () => api.get(`/admin/users${search ? `?search=${encodeURIComponent(search)}` : ''}`).then((r) => { setUsers(r.users); setError(''); }).catch((e) => setError(e.message));
-  useEffect(() => { load(); }, [search]);
+  const load = () => {
+    const p = new URLSearchParams({ page, limit: 50 }); if (search) p.set('search', search);
+    return api.get(`/admin/users?${p}`).then((r) => { setUsers(r.users); setMeta(r.meta); setError(''); }).catch((e) => setError(e.message));
+  };
+  useEffect(() => { setPage(1); }, [search]);
+  useEffect(() => { load(); }, [search, page]);
 
   const role = async (u, value) => {
     try { await api.patch(`/admin/users/${u.user_id}`, { role: value }); toast.ok(`${u.full_name} is now ${value === 'admin' ? 'an administrator' : 'a regular user'}.`); load(); }
@@ -66,6 +72,7 @@ export default function AdminUsers() {
             </tr>))}</tbody>
         </table></div>
       )}
+      {meta && meta.total > meta.limit && <Pager page={meta.page} total={meta.total} limit={meta.limit} onPage={setPage} />}
       <Modal open={!!resetFor} title="Reset password" onClose={() => { setResetFor(null); setTempPw(''); }}
         footer={tempPw ? <button className="btn" onClick={() => { setResetFor(null); setTempPw(''); }}>Done</button>
           : <><button className="btn secondary" onClick={() => setResetFor(null)}>Cancel</button><button className="btn" onClick={reset}>Reset password</button></>}>

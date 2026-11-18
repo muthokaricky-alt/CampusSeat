@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useToast } from '../../context/ToastContext.jsx';
-import { Alert, ConfirmDialog, Empty, Field, Modal, Spinner } from '../../components/ui.jsx';
+import { Alert, ConfirmDialog, Empty, Field, Modal, Pager, Spinner } from '../../components/ui.jsx';
 import { fmtDate, fmtTime, today } from '../../lib/format.js';
 
 const blank = { title: '', description: '', venue: '', event_date: '', start_time: '', end_time: '', capacity: '', restrict: false, school_ids: [] };
@@ -10,6 +10,8 @@ const blank = { title: '', description: '', venue: '', event_date: '', start_tim
 export default function AdminEvents() {
   const toast = useToast();
   const [events, setEvents] = useState(null);
+  const [meta, setMeta] = useState(null);
+  const [page, setPage] = useState(1);
   const [schools, setSchools] = useState([]);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(null); // null | {id?, ...fields}
@@ -18,8 +20,9 @@ export default function AdminEvents() {
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(null);
 
-  const load = () => api.get('/events?past=1').then((r) => setEvents(r.events)).catch((e) => setError(e.message));
-  useEffect(() => { load(); api.get('/schools').then((r) => setSchools(r.schools)); }, []);
+  const load = () => api.get(`/events?past=1&sort=date&dir=desc&limit=50&page=${page}`).then((r) => { setEvents(r.events); setMeta(r.meta); }).catch((e) => setError(e.message));
+  useEffect(() => { api.get('/schools').then((r) => setSchools(r.schools)); }, []);
+  useEffect(() => { load(); }, [page]);
 
   const open = (e) => {
     setErrors({}); setFormError('');
@@ -79,6 +82,7 @@ export default function AdminEvents() {
           </table>
         </div>
       )}
+      {meta && meta.total > meta.limit && <Pager page={meta.page} total={meta.total} limit={meta.limit} onPage={setPage} />}
 
       <Modal open={!!editing} wide title={editing?.id ? 'Edit event' : 'New event'} onClose={() => setEditing(null)}
         footer={<><button type="button" className="btn secondary" onClick={() => setEditing(null)}>Cancel</button><button className="btn" form="event-form" disabled={busy}>{busy ? 'Saving…' : 'Save event'}</button></>}>

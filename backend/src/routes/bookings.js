@@ -6,6 +6,7 @@ import { audit } from '../utils/audit.js';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { buildCard } from '../utils/pdf.js';
 import { isoFields, localToday } from '../utils/time.js';
+import { listParams } from '../utils/list.js';
 
 const router = Router();
 const norm = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -70,8 +71,12 @@ const BOOKING_SELECT = `
   JOIN schools s ON s.school_id = u.school_id`;
 
 router.get('/mine', requireAuth, asyncHandler(async (req, res) => {
-  const rows = await query(`${BOOKING_SELECT} WHERE b.user_id = ? ORDER BY e.event_date DESC, e.start_time DESC`, [req.user.user_id]);
-  res.json({ bookings: rows.map((r) => isoFields(r)) });
+  const lp = listParams(req.query, { sorts: { date: 'e.starts_at', booked_at: 'b.booked_at' }, defaultSort: 'date', defaultDir: 'desc', tiebreak: 'b.booking_id' });
+  const where = ['b.user_id = ?']; const params = [req.user.user_id];
+  if (req.query.event_id) { where.push('b.event_id = ?'); params.push(v.int(req.query.event_id, 'event_id')); }
+  const [{ total }] = await query(`SELECT COUNT(*) AS total FROM bookings b WHERE ${where.join(' AND ')}`, params);
+  const rows = await query(`${BOOKING_SELECT} WHERE ${where.join(' AND ')} ${lp.orderBy} ${lp.limitSql}`, params);
+  res.json({ bookings: rows.map((r) => isoFields(r)), meta: lp.meta(total) });
 }));
 
 router.get('/:id/card', requireAuth, asyncHandler(async (req, res) => {
@@ -89,8 +94,14 @@ router.get('/', requireAdmin, asyncHandler(async (req, res) => {
     const p = v.likePattern(String(req.query.search).slice(0, 100));
     where.push('(u.full_name LIKE ? OR u.student_number LIKE ? OR b.booking_ref LIKE ? OR u.email LIKE ?)'); params.push(p, p, p, p);
   }
-  const rows = await query(`${BOOKING_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY b.booked_at DESC LIMIT 1000`, params);
-  res.json({ bookings: rows.map((r) => isoFields(r)) });
+  const lp = listParams(req.query, {
+    sorts: { booked_at: 'b.booked_at', name: 'u.full_name', event: 'e.title', ref: 'b.booking_ref', school: 's.school_name' },
+    defaultSort: 'booked_at', defaultDir: 'desc', tiebreak: 'b.booking_id',
+  });
+  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  const [{ total }] = await query(`SELECT COUNT(*) AS total FROM bookings b JOIN users u ON u.user_id = b.user_id ${whereSql}`, params);
+  const rows = await query(`${BOOKING_SELECT} ${whereSql} ${lp.orderBy} ${lp.limitSql}`, params);
+  res.json({ bookings: rows.map((r) => isoFields(r)), meta: lp.meta(total) });
 }));
 
 router.delete('/:id', requireAdmin, asyncHandler(async (req, res) => {
