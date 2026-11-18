@@ -57,7 +57,7 @@ export async function runMigrations({ dryRun = false, log = console.log } = {}) 
     await conn.query("SET time_zone = '+00:00'");
     const [[{ got }]] = await conn.query('SELECT GET_LOCK(?, 30) AS got', [LOCK]);
     if (!Number(got)) throw new Error('Another migration is running (could not get the lock within 30 s).');
-    await ensureTable(conn);
+    if (!dryRun) await ensureTable(conn); // a dry run changes nothing, not even this table
     let { pending, changed } = await migrationState(conn);
     if (changed.length) log(`WARNING: these applied migrations were edited afterwards: ${changed.map((m) => m.file).join(', ')}`);
 
@@ -81,7 +81,13 @@ export async function runMigrations({ dryRun = false, log = console.log } = {}) 
         if (!dryRun) await conn.query(m.body);
       } else {
         const mod = await import(pathToFileURL(path.join(MIGRATIONS_DIR, m.file)).href);
-        await mod.up(conn, { dryRun, log: (s) => log(`  ${s}`), env: process.env });
+        try {
+          await mod.up(conn, { dryRun, log: (s) => log(`  ${s}`), env: process.env });
+        } catch (err) {
+          // In a dry run, earlier migrations were not really applied, so later ones may find tables missing.
+          if (!dryRun || !['ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR'].includes(err.code)) throw err;
+          log(`  (cannot preview: needs the migrations before it to be applied first)`);
+        }
       }
       if (!dryRun) await conn.query('INSERT INTO schema_migrations (version, file, checksum) VALUES (?, ?, ?)', [m.version, m.file, m.checksum]);
       done.push(m.file);
