@@ -687,3 +687,4 @@ tr.row-dim td { color: var(--ink-2); }
 .activity li.undone { opacity: 0.55; }
 .activity li.undone strong { text-decoration: line-through; }
 .checkin-form .btn { white-space: nowrap; flex: none; }
+.offline-banner { display: flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.5rem 1rem; background: var(--warn-soft); color: var(--warn); font-weight: 600; font-size: 0.9rem; }

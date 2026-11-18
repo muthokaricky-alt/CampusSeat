@@ -631,6 +631,12 @@ ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted ev
       'index.html is revalidated; hashed assets are cached for a year and compressed');
     const missing = await fetch(`${BASE}/assets/nope-123.js`);
     ok(missing.status === 404 && !(await missing.text()).includes('id="root"'), 'a missing asset is a 404, not the app page');
+    const sw = await fetch(`${BASE}/sw.js`);
+    const swText = await sw.text();
+    ok(sw.status === 200 && (sw.headers.get('content-type') || '').includes('javascript') && /max-age=0/.test(sw.headers.get('cache-control') || '')
+      && swText.includes("req.method !== 'GET'") && swText.includes('clear-private'), 'the offline service worker is served, never long-cached, and only caches GETs');
+    const mf = await fetch(`${BASE}/manifest.webmanifest`);
+    ok(mf.status === 200 && (await mf.json()).start_url === '/my-bookings', 'the app manifest opens straight to My bookings');
     const robots = await fetch(`${BASE}/robots.txt`);
     ok(robots.status === 200 && (await robots.text()).startsWith('User-agent'), 'robots.txt is served');
   } else console.log('SKIP  static asset checks (frontend not built)');
