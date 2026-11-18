@@ -354,13 +354,13 @@ html { scroll-padding-top: 80px; }
 .hero-inner { padding: clamp(3rem, 8vw, 6rem) 0 clamp(2.5rem, 6vw, 4.5rem); }
 .hero h1 { font-size: clamp(2.4rem, 6vw, 4.2rem); line-height: 1.02; letter-spacing: -0.025em; margin-bottom: 1rem; }
 .hero .eyebrow { text-transform: uppercase; letter-spacing: 0.14em; font-size: 0.8rem; font-weight: 700; color: var(--hero-accent); margin-bottom: 0.75rem; }
-.hero-sub { color: var(--hero-ink-2); font-size: clamp(1.02rem, 1.6vw, 1.2rem); max-width: 46ch; margin-bottom: 1.5rem; }
+.hero .hero-sub { color: var(--hero-ink-2); font-size: clamp(1.02rem, 1.6vw, 1.2rem); max-width: 46ch; margin-bottom: 1.5rem; }
 .hero .btn:not(.ghost) { background: #ffffff; color: #0e1a3d; }
 .hero .btn:not(.ghost):hover { background: #e7ecff; }
 .hero .btn.ghost { color: var(--hero-ink); border-color: color-mix(in srgb, var(--hero-ink) 35%, transparent); }
 .hero .btn.ghost:hover { background: color-mix(in srgb, var(--hero-ink) 12%, transparent); color: var(--hero-ink); }
 .hero-actions { gap: 0.75rem; }
-.hero-stats { margin: 1.5rem 0 0; color: var(--hero-ink-2); }
+.hero .hero-stats { margin: 1.5rem 0 0; color: var(--hero-ink-2); }
 .hero-stats strong { color: var(--hero-ink); font-family: var(--font-head); font-size: 1.15rem; }
 .hero :focus-visible { outline-color: #ffd166; }
 
