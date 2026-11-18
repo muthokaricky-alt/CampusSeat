@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { Alert, EventCardSkeleton, Field, useDebounced } from '../components/ui.jsx';
 import EventCard from '../components/EventCard.jsx';
 import { addDays, today } from '../lib/format.js';
+import { CATEGORIES } from '../lib/categories.js';
 import { canAffordHeavyVisuals, loadGsap } from '../motion/index.js';
 
 // The animated backdrop is its own chunk, requested only on desktops that can afford it.
@@ -17,6 +18,7 @@ const CHIPS = [
   { key: 'week', label: 'This week' },
   { key: 'available', label: 'Seats left' },
   { key: 'school', label: 'Open to me', needsUser: true },
+  { key: 'saved', label: 'Saved', needsUser: true },
 ];
 
 /** Staggered entrance for cards that have not been revealed yet (transform + opacity only). */
@@ -33,6 +35,7 @@ export default function Events() {
   const { user } = useAuth();
   const [q, setQ] = useState('');
   const [chip, setChip] = useState('all');
+  const [cats, setCats] = useState([]); // categories (several allowed; none = all)
   const [moreOpen, setMoreOpen] = useState(false);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -51,6 +54,8 @@ export default function Events() {
     if (chip === 'week') { p.set('from', today()); p.set('to', addDays(today(), 6)); }
     if (chip === 'available') p.set('available', '1');
     if (chip === 'school' && user) p.set('school', user.school_id);
+    if (chip === 'saved' && user) p.set('saved', '1');
+    if (cats.length) p.set('category', cats.join(','));
     if (from) p.set('from', from);
     if (to) p.set('to', to);
     return p;
@@ -62,7 +67,7 @@ export default function Events() {
     api.get(`/events?${params()}`).then((r) => { if (live) { setEvents(r.events); setMeta(r.meta); setError(''); } })
       .catch((e) => live && setError(e.message));
     return () => { live = false; };
-  }, [search, chip, from, to, user, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [search, chip, cats, from, to, user, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { if (events?.length) reveal(listRef.current); }, [events]);
 
@@ -82,8 +87,9 @@ export default function Events() {
     return [{ title: 'This week', items: soon }, { title: 'Coming up', items: later }];
   }, [events, chip]);
 
-  const filtered = search || chip !== 'all' || from || to;
-  const clear = () => { setQ(''); setChip('all'); setFrom(''); setTo(''); };
+  const filtered = search || chip !== 'all' || cats.length || from || to;
+  const clear = () => { setQ(''); setChip('all'); setCats([]); setFrom(''); setTo(''); };
+  const toggleCat = (k) => setCats((l) => (l.includes(k) ? l.filter((x) => x !== k) : [...l, k]));
   const openSeats = events?.reduce((n, e) => n + Math.max(0, e.seats_remaining), 0);
 
   return (
@@ -123,6 +129,14 @@ export default function Events() {
             </button>
             {filtered && <button type="button" className="chip ghost" onClick={clear}><X size={15} aria-hidden />Clear</button>}
           </div>
+          <div className="chips cat-chips" role="group" aria-label="Categories">
+            {CATEGORIES.map((c) => (
+              <button key={c.key} type="button" aria-pressed={cats.includes(c.key)} className={`chip cat ${cats.includes(c.key) ? 'on' : ''}`}
+                style={{ '--cat': c.deep, '--cat-light': c.light }} onClick={() => toggleCat(c.key)}>
+                <c.icon size={15} aria-hidden />{c.label}
+              </button>
+            ))}
+          </div>
           {moreOpen && (
             <div className="more-filters" id="more-filters">
               <CalendarRange size={18} aria-hidden className="muted" />
@@ -138,8 +152,8 @@ export default function Events() {
           {!events && !error && <div className="ticket-grid">{Array.from({ length: 6 }, (_, i) => <EventCardSkeleton key={i} />)}</div>}
           {events && events.length === 0 && (
             <div className="empty">
-              <h3>{filtered ? 'No events match' : 'No upcoming events yet'}</h3>
-              <p>{filtered ? 'Try another word, or clear the filters to see everything.' : 'New events are added by the events team. Check back soon.'}</p>
+              <h3>{chip === 'saved' && !search && !cats.length ? 'Nothing saved yet' : filtered ? 'No events match' : 'No upcoming events yet'}</h3>
+              <p>{chip === 'saved' && !search && !cats.length ? 'Tap the bookmark on any event to keep it here for later.' : filtered ? 'Try another word, or clear the filters to see everything.' : 'New events are added by the events team. Check back soon.'}</p>
               {filtered && <button className="btn secondary" onClick={clear}>Clear filters</button>}
             </div>
           )}

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
-import { CalendarDays, Clock, MapPin, Users, ArrowLeft, Armchair, Pencil, Hourglass } from 'lucide-react';
+import { MapPin, Users, ArrowLeft, Armchair, Pencil, Hourglass } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
@@ -10,6 +10,9 @@ import RegistrationCard from '../components/RegistrationCard.jsx';
 import ClickSpark from '../components/reactbits/ClickSpark.jsx';
 import { fmtDate, fmtTime } from '../lib/format.js';
 import { loadGsap } from '../motion/index.js';
+import CoverArt from '../components/CoverArt.jsx';
+import SaveButton from '../components/SaveButton.jsx';
+import { categoryOf } from '../lib/categories.js';
 
 /**
  * Booking flow, designed for the fewest steps: the account's details are already filled in
@@ -211,12 +214,19 @@ export default function EventDetail() {
   return (
     <div className="container page">
       <p><Link to="/" className="row small back-link"><ArrowLeft size={16} aria-hidden />All events</Link></p>
+      <header className="event-hero">
+        <CoverArt category={event.category} seed={event.event_id} />
+        <div className="event-hero-inner">
+          <span className="t2-cat static">{(() => { const c = categoryOf(event.category); return <><c.icon size={13} aria-hidden />{c.label}</>; })()}</span>
+          <h1>{event.title}</h1>
+          <p className="event-hero-when">{fmtDate(event.event_date, { weekday: 'long', day: 'numeric', month: 'long' })} · {fmtTime(event.start_time)} to {fmtTime(event.end_time)} · {event.venue}</p>
+        </div>
+        {!event.is_past && <div className="event-hero-save"><SaveButton event={event} variant="button" /></div>}
+      </header>
       <div className="detail">
         <div>
-          <h1>{event.title}</h1>
+          <h2 className="sr-only">About this event</h2>
           <div className="facts">
-            <div><CalendarDays size={20} aria-hidden />{fmtDate(event.event_date, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</div>
-            <div><Clock size={20} aria-hidden />{fmtTime(event.start_time)} to {fmtTime(event.end_time)}</div>
             <div><MapPin size={20} aria-hidden />{event.venue}</div>
             <div><Users size={20} aria-hidden />{restrictionLabel(event)}</div>
           </div>

@@ -572,3 +572,89 @@ tr.row-dim td { color: var(--ink-2); }
 /* Scrolling boxes must contain their absolutely positioned children (e.g. screen-reader labels in sortable headers), otherwise those escape and widen the page. */
 .table-wrap, .side { position: relative; }
 .sr-only { margin: -1px; padding: 0; border: 0; }
+
+/* =====================================================================================
+   Categories, cover art, ticket cards v2, event banner, save button
+   ===================================================================================== */
+.cover-art { position: absolute; inset: 0; overflow: hidden; }
+.cover-art > svg:first-child { display: block; width: 100%; height: 100%; }
+.cover-art .cover-icon { position: absolute; right: 16px; bottom: 12px; width: 56px; height: 56px; color: #fff; opacity: 0.22; }
+
+/* Ticket card: art on top, perforation, body, footer */
+.ticket-grid { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.ticket2 {
+  position: relative; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 16px; box-shadow: var(--shadow); overflow: hidden;
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.2s;
+}
+.ticket2:hover { transform: translateY(-3px); box-shadow: 0 2px 4px rgba(15, 23, 42, 0.06), 0 16px 32px -14px rgba(15, 23, 42, 0.35); }
+.ticket2.dim { opacity: 0.72; }
+.t2-art { position: relative; height: 112px; flex: none; }
+/* the perforated edge between the art and the body, with notches */
+.t2-art::after { content: ""; position: absolute; left: 14px; right: 14px; bottom: -1px; border-bottom: 2px dashed var(--line); }
+.t2-body { position: relative; padding: 2rem 1.1rem 0.6rem; display: flex; flex-direction: column; gap: 0.45rem; min-width: 0; flex: 1; }
+.t2-body::before, .t2-body::after { content: ""; position: absolute; top: -9px; width: 18px; height: 18px; border-radius: 50%; background: var(--bg); border: 1px solid var(--line); }
+.t2-body::before { left: -10px; } .t2-body::after { right: -10px; }
+.t2-body h3 { margin: 0; font-size: 1.15rem; line-height: 1.25; }
+.t2-body h3 a { color: inherit; text-decoration: none; }
+.t2-body h3 a::after { content: ""; position: absolute; inset: -200px 0 -200px 0; } /* whole card is the link target */
+.ticket2 .meta { display: flex; flex-wrap: wrap; gap: 0.2rem 0.9rem; color: var(--ink-2); font-size: 0.9rem; }
+.ticket2 .meta span { display: inline-flex; align-items: center; gap: 0.3rem; }
+.t2-foot { position: relative; z-index: 2; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; padding: 0.4rem 1.1rem 1rem; min-height: 48px; }
+.t2-cat {
+  position: absolute; left: 12px; top: 12px; z-index: 2; display: inline-flex; align-items: center; gap: 0.3rem;
+  padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.78rem; font-weight: 700; color: #fff;
+  background: rgba(0, 0, 0, 0.32); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.t2-cat.static { position: static; }
+.t2-date {
+  position: absolute; left: 14px; bottom: -26px; z-index: 3; display: grid; justify-items: center; min-width: 58px; padding: 0.35rem 0.5rem;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); line-height: 1.05;
+}
+.t2-date .wk, .t2-date .mon { font-size: 0.72rem; font-weight: 700; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.04em; }
+.t2-date .day { font-family: var(--font-head); font-size: 1.6rem; font-weight: 750; }
+.t2-body { padding-left: 1.1rem; }
+.t2-body { padding-top: 2.6rem; }
+
+/* Save toggle on the card art */
+.save-btn {
+  position: absolute; right: 10px; top: 10px; z-index: 3; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%;
+  border: 0; cursor: pointer; color: #fff; background: rgba(0, 0, 0, 0.32); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  transition: transform 0.15s, background 0.15s;
+}
+.save-btn:hover { background: rgba(0, 0, 0, 0.5); }
+.save-btn:active { transform: scale(0.9); }
+.save-btn.on { background: #ffffff; color: #1d3fb8; }
+.save-btn:focus-visible { outline-color: #ffd166; }
+.btn.is-saved { border-color: var(--primary); color: var(--primary); }
+
+/* Category chips: tinted with their own colour */
+.cat-chips .chip.cat svg { color: var(--cat); }
+:root[data-theme='dark'] .cat-chips .chip.cat svg { color: var(--cat-light); }
+.cat-chips .chip.cat.on { background: var(--cat); border-color: var(--cat); color: #fff; }
+.cat-chips .chip.cat.on svg { color: #fff; }
+@media (max-width: 640px) {
+  .cat-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .cat-chips::-webkit-scrollbar { display: none; }
+  .cat-chips .chip { flex: none; }
+}
+
+/* Event page banner */
+.event-hero { position: relative; isolation: isolate; overflow: hidden; border-radius: 18px; min-height: 220px; display: flex; align-items: flex-end; margin: 0.5rem 0 1.5rem; color: #fff; }
+.event-hero::after { content: ""; position: absolute; inset: 0; z-index: 0; background: linear-gradient(180deg, rgba(0, 0, 0, 0.05) 0%, rgba(0, 0, 0, 0.62) 100%); }
+.event-hero .cover-art { z-index: -1; }
+.event-hero-inner { position: relative; z-index: 1; padding: 1.5rem 1.5rem 1.4rem; max-width: 760px; }
+.event-hero h1 { color: #fff; margin: 0.6rem 0 0.4rem; font-size: clamp(1.8rem, 4.5vw, 2.8rem); line-height: 1.05; text-wrap: balance; }
+.event-hero-when { margin: 0; color: rgba(255, 255, 255, 0.92); font-weight: 500; }
+.event-hero-save { position: absolute; z-index: 1; right: 1.25rem; top: 1.25rem; }
+.event-hero-save .btn.secondary { background: rgba(255, 255, 255, 0.95); color: #0f172a; border-color: transparent; }
+.event-hero-save .btn.secondary.is-saved { color: #1d3fb8; }
+@media (max-width: 640px) {
+  .event-hero { min-height: 200px; border-radius: 14px; }
+  .event-hero-inner { padding: 1rem 1rem 1.1rem; }
+  .event-hero-save { right: 0.75rem; top: 0.75rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticket2:hover, .save-btn:active { transform: none; }
+}
