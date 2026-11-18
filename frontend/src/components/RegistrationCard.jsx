@@ -12,8 +12,8 @@ export default function RegistrationCard({ booking: b, highlight, onCancelled })
   const started = b.starts_at && new Date(b.starts_at) <= new Date();
   const cancel = async () => {
     try {
-      await api.del(`/bookings/${b.booking_id}`);
-      toast.ok('Booking cancelled. Your seat has gone to the next person.');
+      const r = await api.del(`/bookings/${b.booking_id}`);
+      toast.ok(r.promoted ? 'Booking cancelled. Your seat has gone to the next person on the waitlist.' : 'Booking cancelled. The seat is free for someone else.');
       setConfirming(false);
       onCancelled?.();
     } catch (e) { toast.error(e.message); setConfirming(false); }

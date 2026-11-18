@@ -6,7 +6,7 @@ import RegistrationCard from '../components/RegistrationCard.jsx';
 import { fmtDate } from '../lib/format.js';
 
 export default function MyBookings() {
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const fresh = params.get('new');
   const [bookings, setBookings] = useState(null);
   const [waiting, setWaiting] = useState([]);
@@ -35,7 +35,7 @@ export default function MyBookings() {
       {!bookings && !error && <Spinner />}
       {bookings && bookings.length === 0 && <Empty title="You have no bookings yet"><Link to="/">Browse events</Link> and reserve a seat.</Empty>}
       <div className="stack">
-        {bookings?.map((b) => <RegistrationCard key={b.booking_id} booking={b} highlight={b.booking_ref === fresh} onCancelled={load} />)}
+        {bookings?.map((b) => <RegistrationCard key={b.booking_id} booking={b} highlight={b.booking_ref === fresh} onCancelled={() => { if (fresh === b.booking_ref) setParams({}, { replace: true }); load(); }} />)}
       </div>
     </div>
   );
