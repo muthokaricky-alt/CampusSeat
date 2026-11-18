@@ -325,6 +325,100 @@ const del = await call('DELETE', `/api/events/${ev.event_id}`, null, admin.token
 ok(del.status === 200 && del.data.removed_bookings === 4, 'admin deletes event (bookings removed)');
 await call('DELETE', `/api/events/${evLaw.event_id}`, null, admin.token);
 ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted event is gone (404)');
+// --- cancellation by the user, and the waitlist
+{
+  const inbox = async (to) => (await call('GET', `/api/_test/mail?to=${encodeURIComponent(to)}`)).data.messages;
+  const people = await Promise.all(Array.from({ length: 16 }, (_, i) => mkUser(300 + i, comp)));
+  const emailOf = (u) => u.user.email;
+  const W = (await call('POST', '/api/events', mk({ title: `Waitlist ${stamp}`, capacity: 2 }), admin.token)).data.event;
+  const [h1, h2] = people;
+  await book(h1, W.event_id);
+  ok((await call('POST', `/api/events/${W.event_id}/waitlist`, null, people[2].token)).data.error?.code === 'SEATS_AVAILABLE', 'cannot join the waitlist while seats are left');
+  await book(h2, W.event_id);
+  const fullErr = (await book(people[2], W.event_id)).data.error;
+  ok(fullErr?.code === 'EVENT_FULL' && fullErr.waitlist === true, 'full event offers the waitlist');
+
+  // 10 people join at the same moment: everyone gets a distinct place in the queue
+  const joiners = people.slice(2, 12);
+  const joins = await Promise.all(joiners.map((u) => call('POST', `/api/events/${W.event_id}/waitlist`, null, u.token)));
+  const positions = joins.map((r) => r.data.waitlist?.position).sort((a, b) => a - b);
+  ok(joins.every((r) => r.status === 201) && positions.join(',') === '1,2,3,4,5,6,7,8,9,10', '10 simultaneous joins get positions 1 to 10', positions.join(','));
+  const queue = joiners.map((u, i) => ({ u, pos: joins[i].data.waitlist.position })).sort((a, b) => a.pos - b.pos).map((x) => x.u);
+  ok((await call('POST', `/api/events/${W.event_id}/waitlist`, null, queue[0].token)).data.error?.code === 'ALREADY_WAITING', 'cannot join twice');
+  ok((await call('POST', `/api/events/${W.event_id}/waitlist`, null, h1.token)).data.error?.code === 'DUPLICATE_BOOKING', 'seat holders cannot join the waitlist');
+  const seen = (await call('GET', `/api/events/${W.event_id}`, null, queue[1].token)).data.event;
+  ok(seen.my_waitlist?.position === 2 && seen.waitlist_count === 10, 'event shows my place in the queue and the queue length');
+  const adminQ = (await call('GET', `/api/events/${W.event_id}/waitlist`, null, admin.token)).data.waitlist;
+  ok(adminQ.length === 10 && adminQ[0].email === emailOf(queue[0]), 'admin sees the queue in order');
+
+  // the owner cancels: the first person in the queue gets the seat, in the same transaction
+  const h1b = (await call('GET', `/api/bookings/mine?event_id=${W.event_id}`, null, h1.token)).data.bookings[0];
+  ok((await call('DELETE', `/api/bookings/${h1b.booking_id}`, null, h2.token)).status === 404, "cannot cancel someone else's booking");
+  const cx = await call('DELETE', `/api/bookings/${h1b.booking_id}`, null, h1.token);
+  ok(cx.status === 200 && cx.data.promoted === 1, 'owner cancels their booking; one person is promoted');
+  const firstMine = (await call('GET', `/api/bookings/mine?event_id=${W.event_id}`, null, queue[0].token)).data.bookings;
+  ok(firstMine.length === 1, 'the first person in the queue now holds a seat');
+  const promoMail = (await inbox(emailOf(queue[0]))).at(-1);
+  ok(promoMail?.subject.startsWith('You have a seat') && promoMail.text.includes(firstMine[0].booking_ref), 'promoted person is emailed with their booking reference');
+  const afterCx = (await call('GET', `/api/events/${W.event_id}`, null, queue[1].token)).data.event;
+  ok(afterCx.seats_remaining === 0 && afterCx.waitlist_count === 9 && afterCx.my_waitlist.position === 1, 'event stays full; everyone moves up one place');
+  ok((await call('GET', '/api/admin/audit-logs?action=WAITLIST_PROMOTE&search=' + encodeURIComponent(`Waitlist ${stamp}`), null, admin.token)).data.meta.total === 1, 'the promotion is audited');
+
+  // leaving the queue
+  ok((await call('DELETE', `/api/events/${W.event_id}/waitlist`, null, queue[3].token)).status === 200, 'a person leaves the waitlist');
+  ok((await call('DELETE', `/api/events/${W.event_id}/waitlist`, null, queue[3].token)).data.error?.code === 'NOT_WAITING', 'leaving twice is refused');
+  const myW = (await call('GET', '/api/bookings/waitlist', null, queue[4].token)).data.waitlist.find((w) => w.event_id === W.event_id);
+  ok(myW?.position === 3, 'my waitlist page shows the updated position', JSON.stringify(myW));
+
+  // more capacity: the next people in order are promoted
+  const grown = await call('PUT', `/api/events/${W.event_id}`, mk({ title: `Waitlist ${stamp}`, capacity: 4 }), admin.token);
+  ok(grown.data.event?.booked === 4 && grown.data.event.waitlist_count === 6, 'raising capacity by 2 promotes 2 people', JSON.stringify(grown.data.event && { b: grown.data.event.booked, w: grown.data.event.waitlist_count }));
+  const got = await Promise.all([queue[1], queue[2], queue[4]].map(async (u) => (await call('GET', `/api/bookings/mine?event_id=${W.event_id}`, null, u.token)).data.bookings.length));
+  ok(got.join(',') === '1,1,0', 'promotion follows queue order (left person skipped)', got.join(','));
+
+  // race: a holder cancels while 4 non-waiting people try to grab the seat directly
+  const grabbers = people.slice(12, 16);
+  const holder = (await call('GET', `/api/bookings/mine?event_id=${W.event_id}`, null, queue[1].token)).data.bookings[0];
+  const [cancelRes, ...grabs] = await Promise.all([call('DELETE', `/api/bookings/${holder.booking_id}`, null, queue[1].token), ...grabbers.map((u) => book(u, W.event_id))]);
+  const after = (await call('GET', `/api/events/${W.event_id}`)).data.event;
+  ok(cancelRes.status === 200 && after.booked === 4 && grabs.every((r) => r.data.error?.code === 'EVENT_FULL'),
+    'cancel racing 4 direct bookings: the waitlist gets the seat, never overbooked', JSON.stringify({ booked: after.booked, codes: grabs.map((r) => r.data.error?.code || r.status) }));
+  // race: two holders cancel at once: two different people are promoted
+  const hs = await Promise.all([queue[0], queue[2]].map(async (u) => ({ u, b: (await call('GET', `/api/bookings/mine?event_id=${W.event_id}`, null, u.token)).data.bookings[0] })));
+  const both = await Promise.all(hs.map(({ u, b }) => call('DELETE', `/api/bookings/${b.booking_id}`, null, u.token)));
+  const after2 = (await call('GET', `/api/events/${W.event_id}`)).data.event;
+  ok(both.every((r) => r.data.promoted === 1) && after2.booked === 4 && after2.waitlist_count === 3, 'two simultaneous cancellations promote two people; still exactly full', JSON.stringify({ booked: after2.booked, w: after2.waitlist_count }));
+
+  // eligibility is re-checked on promotion
+  const lawU = await mkUser(320, law);
+  const R = (await call('POST', '/api/events', mk({ title: `Restrict ${stamp}`, capacity: 1 }), admin.token)).data.event;
+  await book(people[12], R.event_id);
+  await call('POST', `/api/events/${R.event_id}/waitlist`, null, people[13].token);
+  await call('POST', `/api/events/${R.event_id}/waitlist`, null, lawU.token);
+  await call('PUT', `/api/events/${R.event_id}`, mk({ title: `Restrict ${stamp}`, capacity: 1, school_ids: [comp, law] }), admin.token);
+  await call('PUT', `/api/events/${R.event_id}`, mk({ title: `Restrict ${stamp}`, capacity: 1, school_ids: [law] }), admin.token);
+  const rb = (await call('GET', `/api/bookings/mine?event_id=${R.event_id}`, null, people[12].token)).data.bookings[0];
+  await call('DELETE', `/api/bookings/${rb.booking_id}`, null, admin.token);
+  ok((await call('GET', `/api/bookings/mine?event_id=${R.event_id}`, null, lawU.token)).data.bookings.length === 1
+    && (await call('GET', `/api/bookings/mine?event_id=${R.event_id}`, null, people[13].token)).data.bookings.length === 0,
+    'promotion skips people no longer eligible after a school restriction');
+
+  // cancellation cutoff (2 hours before the start) for the owner; admins can still cancel
+  const nb = (d) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    .formatToParts(d).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
+  const s0 = nb(new Date(Date.now() + 61 * 60e3)); const e0 = nb(new Date(Date.now() + 121 * 60e3));
+  if (`${s0.year}-${s0.month}-${s0.day}` === `${e0.year}-${e0.month}-${e0.day}`) {
+    const C = (await call('POST', '/api/events', mk({ title: `Soon ${stamp}`, event_date: `${s0.year}-${s0.month}-${s0.day}`, start_time: `${s0.hour}:${s0.minute}`, end_time: `${e0.hour}:${e0.minute}` }), admin.token)).data.event;
+    const cb = (await book(people[14], C.event_id)).data.booking;
+    const late = await call('DELETE', `/api/bookings/${cb.booking_id}`, null, people[14].token);
+    ok(late.data.error?.code === 'CANCEL_CUTOFF' && late.data.error.deadline, 'owner cannot cancel within 2 hours of the start', JSON.stringify(late.data));
+    ok((await call('DELETE', `/api/bookings/${cb.booking_id}`, null, admin.token)).status === 200, 'an admin can still cancel close to the start');
+    await call('DELETE', `/api/events/${C.event_id}`, null, admin.token);
+  } else console.log('SKIP  cancellation cutoff check (event would cross midnight in Nairobi)');
+  ok((await call('GET', `/api/admin/audit-logs?action=CANCEL_BOOKING&search=${encodeURIComponent('by its owner')}`, null, admin.token)).data.meta.total >= 3, 'owner cancellations are audited');
+  for (const e of [W, R]) await call('DELETE', `/api/events/${e.event_id}`, null, admin.token);
+}
+
 // --- lists: pagination, sorting, one response shape
 {
   const extra = [];
