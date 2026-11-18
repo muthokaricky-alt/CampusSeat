@@ -53,6 +53,9 @@ export const config = {
   cookieSecure: read('COOKIE_SECURE', { def: isProd ? 'true' : 'false', oneOf: ['true', 'false'] }) === 'true',
   sessionIdleMinutes: read('SESSION_IDLE_MINUTES', { def: 120, int: true, min: 5, max: 7 * 24 * 60 }),
   sessionMaxDays: read('SESSION_MAX_DAYS', { def: 7, int: true, min: 1, max: 90 }),
+  // Account lockout after repeated failed logins (on top of the per-IP rate limits).
+  lockoutThreshold: read('LOCKOUT_THRESHOLD', { def: 5, int: true, min: 3, max: 50 }),
+  lockoutMinutes: read('LOCKOUT_MINUTES', { def: 15, int: true, min: 1, max: 1440 }),
   // Raises every rate limit by this factor. Only for automated tests: refused in production.
   rateLimitScale: read('RATE_LIMIT_SCALE', { def: 1, int: true, min: 1, max: 1000 }),
 };

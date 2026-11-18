@@ -7,6 +7,7 @@ import * as v from '../utils/validate.js';
 import { audit } from '../utils/audit.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { revokeUserSessions } from '../sessions.js';
+import { unlock } from '../lockout.js';
 import { buildReport, toCsv } from '../utils/pdf.js';
 import { isoFields, localDayRangeUtc, localToday, offsetString, sqlToLocal } from '../utils/time.js';
 
@@ -50,9 +51,10 @@ router.get('/users', asyncHandler(async (req, res) => {
   }
   const users = await query(`
     SELECT u.user_id, u.full_name, u.student_number, u.email, u.role, u.created_at, s.school_name,
+           IF(u.locked_until > UTC_TIMESTAMP(), u.locked_until, NULL) AS locked_until,
            (SELECT COUNT(*) FROM bookings b WHERE b.user_id = u.user_id) AS bookings
     FROM users u JOIN schools s ON s.school_id = u.school_id ${where} ORDER BY u.created_at DESC LIMIT 500`, params);
-  res.json({ users: users.map((u) => isoFields({ ...u, bookings: Number(u.bookings) })) });
+  res.json({ users: users.map((u) => isoFields({ ...u, bookings: Number(u.bookings) }, ['created_at', 'locked_until'])) });
 }));
 
 router.patch('/users/:id', asyncHandler(async (req, res) => {
@@ -68,6 +70,15 @@ router.patch('/users/:id', asyncHandler(async (req, res) => {
   res.json({ ok: true });
 }));
 
+router.post('/users/:id/unlock', asyncHandler(async (req, res) => {
+  const id = v.int(req.params.id, 'id');
+  const [u] = await query('SELECT email FROM users WHERE user_id = ?', [id]);
+  if (!u) throw new AppError(404, 'NOT_FOUND', 'User not found.');
+  await unlock(id);
+  await audit(req.user.user_id, 'ACCOUNT_UNLOCK', `Unlocked ${u.email}`);
+  res.json({ ok: true });
+}));
+
 router.post('/users/:id/reset-password', asyncHandler(async (req, res) => {
   const id = v.int(req.params.id, 'id');
   const [u] = await query('SELECT email FROM users WHERE user_id = ?', [id]);
@@ -76,6 +87,7 @@ router.post('/users/:id/reset-password', asyncHandler(async (req, res) => {
   const temp = Array.from(crypto.randomBytes(10), (b) => alphabet[b % alphabet.length]).join('') + '7a';
   await query('UPDATE users SET password_hash = ? WHERE user_id = ?', [await bcrypt.hash(temp, 12), id]);
   await revokeUserSessions(id); // whoever was logged in with the old password is logged out
+  await unlock(id);
   await audit(req.user.user_id, 'ADMIN_RESET_PASSWORD', `Reset password for ${u.email}`);
   res.json({ temporary_password: temp });
 }));
