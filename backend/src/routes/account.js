@@ -39,7 +39,7 @@ router.post('/2fa/setup', adminOnly, asyncHandler(async (req, res) => {
 router.post('/2fa/enable', adminOnly, asyncHandler(async (req, res) => {
   const codes = await twoFactor.confirmSetup(req.user.user_id, req.body?.code);
   if (!codes) throw new AppError(400, 'INVALID_2FA_CODE', 'That code is not right. Scan the QR code again and enter the current 6-digit code.', { field: 'code' });
-  await audit(req.user.user_id, '2FA_ENABLE', 'Two-factor login turned on');
+  await audit(req, '2FA_ENABLE', { actorId: req.user.user_id, entity: ['user', req.user.user_id], details: 'Two-factor login turned on' });
   res.json({ ok: true, backup_codes: codes });
 }));
 
@@ -48,7 +48,7 @@ router.post('/2fa/disable', asyncHandler(async (req, res) => {
   await confirmPassword(req);
   await confirmCode(req);
   await twoFactor.disable(req.user.user_id);
-  await audit(req.user.user_id, '2FA_DISABLE', 'Two-factor login turned off');
+  await audit(req, '2FA_DISABLE', { actorId: req.user.user_id, entity: ['user', req.user.user_id], details: 'Two-factor login turned off' });
   res.json({ ok: true });
 }));
 
@@ -57,7 +57,7 @@ router.post('/2fa/backup-codes', asyncHandler(async (req, res) => {
   await confirmPassword(req);
   await confirmCode(req);
   const codes = await twoFactor.regenerateBackupCodes(req.user.user_id);
-  await audit(req.user.user_id, '2FA_BACKUP_REGENERATED', 'New backup codes; the old ones stopped working');
+  await audit(req, '2FA_BACKUP_REGENERATED', { actorId: req.user.user_id, entity: ['user', req.user.user_id], details: 'New backup codes; the old ones stopped working' });
   res.json({ ok: true, backup_codes: codes });
 }));
 

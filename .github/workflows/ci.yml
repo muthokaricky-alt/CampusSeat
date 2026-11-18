@@ -58,6 +58,9 @@ jobs:
       - name: Generate a throwaway two-factor key
         run: echo "TOTP_ENC_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")" >> "$GITHUB_ENV"
 
+      - name: Allow the append-only audit triggers (as on Aiven)
+        run: mysql -h 127.0.0.1 -uroot -pci_root -e "SET PERSIST log_bin_trust_function_creators = 1"
+
       - name: Migrate and seed
         working-directory: backend
         run: |

@@ -1,5 +1,6 @@
 import { pool } from './db.js';
 import { listMigrations } from '../scripts/migrate.js';
+import { auditLogProtected } from './auditProtection.js';
 
 let shuttingDown = false;
 export const markShuttingDown = () => { shuttingDown = true; };
@@ -39,5 +40,7 @@ export async function health(_req, res) {
 export async function ready(_req, res) {
   const [db, migrations] = await Promise.all([checkDb(), checkMigrations()]);
   const ok = db.ok && migrations.ok && !shuttingDown;
-  res.status(ok ? 200 : 503).json({ ok, db, migrations, shutting_down: shuttingDown });
+  // Informational: whether the database itself refuses changes to audit rows (does not affect ok).
+  const audit_append_only = db.ok ? await auditLogProtected(pool).catch(() => null) : null;
+  res.status(ok ? 200 : 503).json({ ok, db, migrations, audit_append_only, shutting_down: shuttingDown });
 }

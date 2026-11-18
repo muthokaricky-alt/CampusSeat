@@ -54,7 +54,7 @@ export async function insertBooking(conn, userId, eventId) {
  * People no longer eligible (the event was restricted to other schools after they joined) are
  * skipped and taken off the list. Returns the people promoted, for emails after commit.
  */
-export async function promoteWaitlist(conn, event) {
+export async function promoteWaitlist(conn, event, req = null) {
   if (event.is_past) return [];
   let free = event.capacity - (await bookedCount(conn, event.event_id));
   if (free <= 0) return [];
@@ -72,7 +72,9 @@ export async function promoteWaitlist(conn, event) {
     const b = await insertBooking(conn, next.user_id, event.event_id);
     await conn.execute("UPDATE waitlist SET status = 'promoted', promoted_booking_id = ?, updated_at = UTC_TIMESTAMP() WHERE waitlist_id = ?",
       [b.booking_id, next.waitlist_id]);
-    await audit(next.user_id, 'WAITLIST_PROMOTE', `Event #${event.event_id} "${event.title}": seat from the waitlist, ref ${b.booking_ref}`, conn);
+    await audit(req, 'WAITLIST_PROMOTE', {
+      entity: ['booking', b.booking_id], after: { event_id: event.event_id, user_id: next.user_id, booking_ref: b.booking_ref, waitlist_id: next.waitlist_id },
+      details: `Event #${event.event_id} "${event.title}": seat from the waitlist for ${next.email}, ref ${b.booking_ref}`, conn });
     promoted.push({ ...b, user_id: next.user_id, full_name: next.full_name, email: next.email });
     free -= 1;
   }

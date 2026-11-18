@@ -55,7 +55,7 @@ router.post('/register', registerLimiter, asyncHandler(async (req, res) => {
     }
     throw err;
   }
-  await audit(id, 'REGISTER', `New account ${email}`);
+  await audit(req, 'REGISTER', { actorId: id, entity: ['user', id], after: { full_name, email, student_number, school_id }, details: `New account ${email}` });
   const user = await loadFull(id);
   const csrf_token = await startSession(res, id, req);
   res.status(201).json({ user: publicUser(user), csrf_token });
@@ -70,23 +70,23 @@ router.post('/login', loginLimiter, asyncHandler(async (req, res) => {
   const ok = await bcrypt.compare(pw, user ? user.password_hash : DUMMY_HASH);
   const lockedFor = user ? await lockout.lockRemaining(user.user_id) : lockout.ghostRemaining(em);
   if (lockedFor > 0) {
-    await audit(user?.user_id ?? null, 'LOGIN_FAILED', `Login refused for ${em}: account locked`);
+    await audit(req, 'LOGIN_FAILED', { actorId: user?.user_id ?? null, entity: ['user', user?.user_id ?? null], details: `Login refused for ${em}: account locked` });
     throw new AppError(429, 'ACCOUNT_LOCKED', lockout.lockedMessage(lockedFor), { retry_after_s: lockedFor });
   }
   if (!user || !ok) {
     const r = user ? await lockout.recordFailure(user.user_id) : lockout.ghostFailure(em);
-    await audit(user?.user_id ?? null, 'LOGIN_FAILED', `Failed login for ${em}`);
-    if (r.locked && user) await audit(user.user_id, 'ACCOUNT_LOCKED', `Locked for ${r.minutes} min after ${config.lockoutThreshold} failed logins`);
+    await audit(req, 'LOGIN_FAILED', { actorId: user?.user_id ?? null, entity: ['user', user?.user_id ?? null], details: `Failed login for ${em}` });
+    if (r.locked && user) await audit(req, 'ACCOUNT_LOCKED', { actorId: user.user_id, entity: ['user', user.user_id], details: `Locked for ${r.minutes} min after ${config.lockoutThreshold} failed logins` });
     throw new AppError(401, 'INVALID_CREDENTIALS', 'Incorrect email or password.');
   }
   if (user.totp_enabled_at) {
     // Password is right; the session starts only after the second factor (POST /auth/2fa).
     const challenge = await twoFactor.createChallenge(user.user_id);
-    await audit(user.user_id, 'LOGIN_PASSWORD_OK', 'Waiting for the two-factor code');
+    await audit(req, 'LOGIN_PASSWORD_OK', { actorId: user.user_id, entity: ['user', user.user_id], details: 'Waiting for the two-factor code' });
     return res.json({ mfa_required: true, challenge });
   }
   if (user.failed_logins || user.lock_count) await lockout.recordSuccess(user.user_id);
-  await audit(user.user_id, 'LOGIN');
+  await audit(req, 'LOGIN', { actorId: user.user_id, entity: ['user', user.user_id] });
   res.json(await finishLogin(req, res, user));
 }));
 
@@ -112,8 +112,8 @@ router.post('/2fa', loginLimiter, asyncHandler(async (req, res) => {
   if (!method) {
     const left = await twoFactor.failChallenge(challenge);
     const r = await lockout.recordFailure(c.userId); // wrong codes count toward the account lock too
-    await audit(c.userId, 'LOGIN_FAILED', 'Wrong two-factor code');
-    if (r.locked) await audit(c.userId, 'ACCOUNT_LOCKED', `Locked for ${r.minutes} min after failed two-factor codes`);
+    await audit(req, 'LOGIN_FAILED', { actorId: c.userId, entity: ['user', c.userId], details: 'Wrong two-factor code' });
+    if (r.locked) await audit(req, 'ACCOUNT_LOCKED', { actorId: c.userId, entity: ['user', c.userId], details: `Locked for ${r.minutes} min after failed two-factor codes` });
     if (left <= 0) throw new AppError(401, 'CHALLENGE_EXPIRED', 'Too many wrong codes. Enter your email and password again.');
     throw new AppError(401, 'INVALID_2FA_CODE', 'That code is not right. Check the time on your phone, or use a backup code.', { field: 'code', attempts_left: left });
   }
@@ -122,16 +122,16 @@ router.post('/2fa', loginLimiter, asyncHandler(async (req, res) => {
   const user = await loadFull(c.userId);
   if (method === 'backup') {
     const st = await twoFactor.status(c.userId);
-    await audit(c.userId, '2FA_BACKUP_USED', `Backup code used; ${st.backup_codes_left} left`);
+    await audit(req, '2FA_BACKUP_USED', { actorId: c.userId, entity: ['user', c.userId], details: `Backup code used; ${st.backup_codes_left} left` });
   }
-  await audit(c.userId, 'LOGIN', `With two-factor (${method === 'backup' ? 'backup code' : 'app code'})`);
+  await audit(req, 'LOGIN', { actorId: c.userId, entity: ['user', c.userId], details: `With two-factor (${method === 'backup' ? 'backup code' : 'app code'})` });
   res.json(await finishLogin(req, res, user));
 }));
 
 router.post('/logout', requireAuth, asyncHandler(async (req, res) => {
   await revokeSession(req.session.hash);
   clearSessionCookie(res);
-  await audit(req.user.user_id, 'LOGOUT');
+  await audit(req, 'LOGOUT', { actorId: req.user.user_id, entity: ['user', req.user.user_id] });
   res.json({ ok: true });
 }));
 
@@ -139,7 +139,7 @@ router.post('/logout', requireAuth, asyncHandler(async (req, res) => {
 router.post('/logout-all', requireAuth, asyncHandler(async (req, res) => {
   const n = await revokeUserSessions(req.user.user_id);
   clearSessionCookie(res);
-  await audit(req.user.user_id, 'LOGOUT_ALL', `Ended ${n} session(s)`);
+  await audit(req, 'LOGOUT_ALL', { actorId: req.user.user_id, entity: ['user', req.user.user_id], details: `Ended ${n} session(s)` });
   res.json({ ok: true, ended: n });
 }));
 
@@ -162,7 +162,7 @@ router.post('/forgot-password', resetLimiter, asyncHandler(async (req, res) => {
   const [user] = await query('SELECT user_id, full_name, email FROM users WHERE email = ?', [em]);
   if (user) {
     const r = await issueReset(user, req.ip);
-    await audit(user.user_id, 'PASSWORD_RESET_REQUEST', r ? 'Reset link emailed' : 'Ignored: 3 requests in the last hour');
+    await audit(req, 'PASSWORD_RESET_REQUEST', { actorId: user.user_id, entity: ['user', user.user_id], details: r ? 'Reset link emailed' : 'Ignored: 3 requests in the last hour' });
   }
   res.json({ ok: true, message: 'If an account uses that email, we have sent it a link to reset the password. Check your inbox (and spam folder).' });
 }));
@@ -192,7 +192,7 @@ router.post('/reset-password', resetLimiter, asyncHandler(async (req, res) => {
     await revokeUserSessions(row.user_id, { conn }); // log out everywhere: whoever knew the old password is out
     return row.user_id;
   });
-  await audit(userId, 'PASSWORD_RESET', 'Password reset with an emailed link');
+  await audit(req, 'PASSWORD_RESET', { actorId: userId, entity: ['user', userId], details: 'Password reset with an emailed link' });
   res.json({ ok: true });
 }));
 
@@ -203,7 +203,7 @@ router.post('/change-password', requireAuth, asyncHandler(async (req, res) => {
   const pw = v.password(req.body?.new_password, 'new_password');
   await query('UPDATE users SET password_hash = ? WHERE user_id = ?', [await bcrypt.hash(pw, 12), req.user.user_id]);
   const ended = await revokeUserSessions(req.user.user_id, { except: req.session.hash }); // other devices are logged out
-  await audit(req.user.user_id, 'PASSWORD_CHANGE', ended ? `Ended ${ended} other session(s)` : null);
+  await audit(req, 'PASSWORD_CHANGE', { actorId: req.user.user_id, entity: ['user', req.user.user_id], details: ended ? `Ended ${ended} other session(s)` : null });
   res.json({ ok: true, other_sessions_ended: ended });
 }));
 

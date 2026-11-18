@@ -17,6 +17,7 @@ import eventRoutes from './routes/events.js';
 import bookingRoutes from './routes/bookings.js';
 import adminRoutes from './routes/admin.js';
 import accountRoutes from './routes/account.js';
+import auditRoutes from './routes/audit.js';
 
 export function createApp() {
   const app = express();
@@ -40,6 +41,7 @@ export function createApp() {
   app.use('/api/schools', schoolRoutes);
   app.use('/api/events', eventRoutes);
   app.use('/api/bookings', bookingRoutes);
+  app.use('/api/admin', auditRoutes);
   app.use('/api/admin', adminRoutes);
   app.use('/api', (_req, _res, next) => next(new AppError(404, 'NOT_FOUND', 'Endpoint not found.')));
 

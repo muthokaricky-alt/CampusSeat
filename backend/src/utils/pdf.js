@@ -121,11 +121,14 @@ export function buildReport(res, { title, filters = [], columns, rows, totals = 
  * would run as a formula in Excel or Sheets, so it gets a leading apostrophe and stays text.
  * Numbers are left alone so negative values still work as numbers.
  */
-export const toCsv = (columns, rows) => {
-  const esc = (v) => {
-    let s = String(v ?? '');
-    if (typeof v !== 'number' && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
-    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-  };
-  return [columns.map((c) => esc(c.label)).join(','), ...rows.map((r) => columns.map((c) => esc(r[c.key])).join(','))].join('\n');
+const FORMULA_START = /^[=+\-@\t\r]/;
+const NEEDS_QUOTES = /[",\r\n]/;
+export const csvCell = (v) => {
+  let s = String(v ?? '');
+  if (typeof v !== 'number' && FORMULA_START.test(s)) s = `'${s}`;
+  return NEEDS_QUOTES.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 };
+export const csvRow = (values) => values.map(csvCell).join(',');
+
+export const toCsv = (columns, rows) =>
+  [csvRow(columns.map((c) => c.label)), ...rows.map((r) => csvRow(columns.map((c) => r[c.key])))].join('\n');
