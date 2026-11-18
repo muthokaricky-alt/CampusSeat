@@ -97,9 +97,11 @@ router.get('/audit-logs/export', asyncHandler(async (req, res) => {
     lastId = rows.at(-1).log_id;
     if (rows.length < BATCH) break;
   }
-  res.end();
+  // Record the export BEFORE finishing the response. Ending first let the client receive the whole
+  // file and read the audit log before this entry was saved (a race seen in CI).
   const { page: _p, limit: _l, ...filters } = req.query;
   await audit(req, 'AUDIT_EXPORT', { entity: ['audit_log', 'export'], after: { filters, rows: written, truncated: written >= EXPORT_MAX }, details: `Exported ${written} audit entr${written === 1 ? 'y' : 'ies'} to CSV` });
+  res.end();
 }));
 
 router.get('/audit-logs/:id', asyncHandler(async (req, res) => {

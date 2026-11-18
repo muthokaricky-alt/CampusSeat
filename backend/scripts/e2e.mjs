@@ -562,6 +562,17 @@ ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted ev
   ok(ex.ct.includes('text/csv') && /audit-\d{4}-\d{2}-\d{2}\.csv/.test(ex.headers.get('content-disposition')) && csv[0].startsWith('Time (EAT),Time (UTC),Actor email'), 'audit export is a CSV file with a header row');
   ok(csv.length - 1 === byEvent.meta.total && csv.slice(1).every((l) => l.includes(String(ae.event_id))), 'export contains exactly the filtered entries');
   ok((await logs('action=AUDIT_EXPORT&limit=1')).logs[0]?.after?.rows === byEvent.meta.total, 'the export itself is audited with its filters and size');
+  {
+    // Regression guard: the entry must exist as soon as the download has finished (it used to be saved
+    // after the response ended, so an immediate read missed it about half the time).
+    let seen = 0;
+    for (let i = 0; i < 10; i++) {
+      const marker = `race-${stamp}-${i}`;
+      await call('GET', `/api/admin/audit-logs/export?search=${marker}`, null, admin.token);
+      if ((await logs('action=AUDIT_EXPORT&limit=1')).logs[0]?.after?.filters?.search === marker) seen++;
+    }
+    ok(seen === 10, 'each export is audited before its download completes (10 back-to-back tries)', `${seen}/10`);
+  }
   ok((await call('GET', '/api/admin/audit-logs/export', null, u1.token)).status === 403, 'only admins can export the audit trail');
 
   // append-only
