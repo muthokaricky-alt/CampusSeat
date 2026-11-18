@@ -240,7 +240,10 @@ ok((await book(u1, ev.event_id, { ...u1.creds, student_number: 'NOPE999' })).dat
 ok((await call('POST', '/api/bookings', { event_id: ev.event_id, ...u1.creds })).status === 401, 'booking needs login');
 const card = await call('GET', `/api/bookings/${b1.data.booking.booking_id}/card`, null, u1.token);
 ok(card.ct.includes('pdf') && card.data.slice(0, 4).toString() === '%PDF', 'registration card is a PDF');
+const qr = await call('GET', `/api/bookings/${b1.data.booking.booking_id}/qr.svg`, null, u1.token);
+ok(qr.status === 200 && qr.ct.includes('image/svg+xml') && qr.data.toString().includes('<svg'), 'on-screen card QR code is an SVG');
 const u2 = await mkUser(2, comp);
+ok((await call('GET', `/api/bookings/${b1.data.booking.booking_id}/qr.svg`, null, u2.token)).status === 404, "cannot fetch someone else's QR code");
 ok((await call('GET', `/api/bookings/${b1.data.booking.booking_id}/card`, null, u2.token)).status === 404, "cannot download someone else's card");
 ok((await call('GET', '/api/bookings/mine', null, u1.token)).data.bookings.length === 1, 'my bookings lists the booking');
 
