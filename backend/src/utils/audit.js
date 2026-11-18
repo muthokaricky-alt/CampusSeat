@@ -1,4 +1,5 @@
 import { pool } from '../db.js';
+import { logger } from '../logger.js';
 
 /** Writes an audit-trail row. Never throws: a logging failure must not break the user's action. */
 export async function audit(userId, action, details = null, conn = pool) {
@@ -9,6 +10,6 @@ export async function audit(userId, action, details = null, conn = pool) {
       details,
     ]);
   } catch (err) {
-    console.error('Audit log failed:', err.message);
+    logger.error({ err, action }, 'audit log write failed');
   }
 }

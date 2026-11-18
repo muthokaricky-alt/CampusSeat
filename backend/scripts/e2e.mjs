@@ -3,11 +3,11 @@
 const BASE = process.env.BASE_URL || 'http://localhost:4000';
 let pass = 0, failed = 0;
 const ok = (cond, name, extra = '') => { cond ? pass++ : failed++; console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${cond ? '' : '  ' + extra}`); };
-const call = async (method, path, body, token) => {
-  const res = await fetch(BASE + path, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: body ? JSON.stringify(body) : undefined });
+const call = async (method, path, body, token, extraHeaders = {}) => {
+  const res = await fetch(BASE + path, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...extraHeaders }, body: body ? JSON.stringify(body) : undefined });
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('json') ? await res.json() : Buffer.from(await res.arrayBuffer());
-  return { status: res.status, data, ct };
+  return { status: res.status, data, ct, headers: res.headers };
 };
 const stamp = Date.now().toString(36);
 const mkUser = async (i, school_id) => {
@@ -100,5 +100,24 @@ const del = await call('DELETE', `/api/events/${ev.event_id}`, null, admin.token
 ok(del.status === 200 && del.data.removed_bookings === 4, 'admin deletes event (bookings removed)');
 await call('DELETE', `/api/events/${evLaw.event_id}`, null, admin.token);
 ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted event is gone (404)');
+// --- operations: health, readiness, request ids, config validation
+const h = await call('GET', '/api/health');
+ok(h.status === 200 && h.data.db?.ok === true && typeof h.data.db.latency_ms === 'number', 'health reports database ok with latency');
+const rd = await call('GET', '/api/ready');
+ok(rd.status === 200 && rd.data.migrations?.ok === true && rd.data.migrations.pending.length === 0, 'ready: database reachable and migrations up to date');
+ok(/^[0-9a-f-]{36}$/.test(h.headers.get('x-request-id') || ''), 'every response carries a generated X-Request-Id');
+ok((await call('GET', '/api/schools', null, null, { 'X-Request-Id': 'trace-abc-12345' })).headers.get('x-request-id') === 'trace-abc-12345', 'well-formed incoming request id is reused');
+ok(/^[0-9a-f-]{36}$/.test((await call('GET', '/api/schools', null, null, { 'X-Request-Id': 'bad id <script>' })).headers.get('x-request-id')), 'malformed incoming request id is replaced');
+const nf = await call('GET', '/api/nope');
+ok(nf.status === 404 && nf.data.error.request_id === nf.headers.get('x-request-id'), 'error responses include the request id');
+{
+  const { spawnSync } = await import('node:child_process');
+  const r = spawnSync(process.execPath, ['-e', "import('./src/config.js')"], {
+    env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, NODE_ENV: 'production', DOTENV_CONFIG_PATH: 'none.env', JWT_SECRET: 'short', RATE_LIMIT_SCALE: '50' }, encoding: 'utf8' });
+  const msg = r.stderr || '';
+  ok(r.status === 1 && /JWT_SECRET must be at least 32/.test(msg) && /DB_PASSWORD is missing/.test(msg) && /APP_URL is missing/.test(msg) && /RATE_LIMIT_SCALE must not be set/.test(msg),
+    'invalid production config is refused at startup with every problem listed', msg.slice(0, 300));
+}
+
 console.log(`\n${pass} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
