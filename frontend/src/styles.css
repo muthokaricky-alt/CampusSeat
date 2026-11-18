@@ -658,3 +658,32 @@ tr.row-dim td { color: var(--ink-2); }
 @media (prefers-reduced-motion: reduce) {
   .ticket2:hover, .save-btn:active { transform: none; }
 }
+
+/* ---------- Door check-in ---------- */
+.checkin-count { display: grid; justify-items: end; line-height: 1; }
+.checkin-count strong { font-family: var(--font-head); font-size: 2.6rem; }
+.checkin-count span { color: var(--ink-2); font-size: 0.9rem; margin-top: 0.2rem; }
+.checkin-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.25rem; align-items: start; }
+@media (max-width: 960px) { .checkin-grid { grid-template-columns: 1fr; } }
+.checkin-form .label { display: block; font-weight: 600; margin-bottom: 0.35rem; }
+.checkin-form .row { flex-wrap: nowrap; }
+.checkin-input { font-family: ui-monospace, Consolas, monospace; font-size: 1.25rem; letter-spacing: 0.04em; min-height: 52px; text-transform: uppercase; }
+.checkin-input::placeholder { text-transform: none; }
+@media (max-width: 520px) { .checkin-form .row { flex-wrap: wrap; } .checkin-form .btn { width: 100%; } }
+.scanner { display: none; position: relative; border-radius: 14px; overflow: hidden; background: #000; aspect-ratio: 4 / 3; }
+.scanner.on { display: block; }
+.scanner video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.scan-frame { position: absolute; inset: 18%; border: 3px solid rgba(255, 255, 255, 0.9); border-radius: 16px; box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.35); }
+.checkin-result { min-height: 16rem; border-width: 2px; }
+.checkin-result.idle { display: grid; place-items: center; text-align: center; }
+.checkin-result .result-head { display: flex; align-items: center; gap: 0.6rem; font-family: var(--font-head); font-size: 1.6rem; }
+.checkin-result .result-msg { font-size: 1.1rem; margin: 0.6rem 0 1rem; font-weight: 600; }
+.checkin-result.ok { border-color: var(--ok); background: color-mix(in srgb, var(--ok-soft) 70%, var(--surface)); }
+.checkin-result.ok .result-head { color: var(--ok); }
+.checkin-result.warn { border-color: var(--warn); background: color-mix(in srgb, var(--warn-soft) 70%, var(--surface)); }
+.checkin-result.warn .result-head { color: var(--warn); }
+.checkin-result.bad { border-color: var(--bad); background: color-mix(in srgb, var(--bad-soft) 70%, var(--surface)); }
+.checkin-result.bad .result-head { color: var(--bad); }
+.activity li.undone { opacity: 0.55; }
+.activity li.undone strong { text-decoration: line-through; }
+.checkin-form .btn { white-space: nowrap; flex: none; }

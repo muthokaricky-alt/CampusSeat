@@ -22,6 +22,7 @@ const AdminBookings = lazy(() => import('./pages/admin/AdminBookings.jsx'));
 const AdminUsers = lazy(() => import('./pages/admin/AdminUsers.jsx'));
 const Reports = lazy(() => import('./pages/admin/Reports.jsx'));
 const AuditLogs = lazy(() => import('./pages/admin/AuditLogs.jsx'));
+const CheckIn = lazy(() => import('./pages/admin/CheckIn.jsx'));
 
 /** Sends visitors to the login page when a route needs an account (or the admin role). */
 function Guard({ admin, children }) {
@@ -75,6 +76,7 @@ export default function App() {
             <Route path="account" element={<Guard><Security /></Guard>} />
             <Route path="admin" element={<Guard admin><AdminLayout /></Guard>}>
               <Route index element={<Dashboard />} />
+              <Route path="check-in" element={<CheckIn />} />
               <Route path="events" element={<AdminEvents />} />
               <Route path="bookings" element={<AdminBookings />} />
               <Route path="users" element={<AdminUsers />} />

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BarChart3, CalendarPlus, Hourglass, Ticket, UserPlus, Armchair } from 'lucide-react';
+import { BarChart3, CalendarPlus, Hourglass, Ticket, UserPlus, Armchair, ScanLine, DoorOpen } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { Alert } from '../../components/ui.jsx';
 import { SeatMeter } from '../../components/EventCard.jsx';
@@ -43,6 +43,7 @@ export default function Dashboard() {
         </div>
         <div className="row">
           <Link className="btn" to="/admin/events?new=1"><CalendarPlus size={18} aria-hidden />New event</Link>
+          <Link className="btn secondary" to="/admin/check-in"><ScanLine size={18} aria-hidden />Check-in</Link>
           <Link className="btn secondary" to="/admin/reports"><BarChart3 size={18} aria-hidden />Reports</Link>
         </div>
       </div>
@@ -58,6 +59,8 @@ export default function Dashboard() {
           trend={s?.signups_14.map((d) => d.n)} />
         <StatCard icon={Armchair} label="Seats filled" loading={!s} value={s ? (fill > 0 && fill < 0.01 ? '<1' : Math.round(fill * 100)) : null} unit="%"
           hint={t && `${t.upcoming_booked} of ${t.upcoming_seats} seats across ${t.upcoming_events} upcoming event${t.upcoming_events === 1 ? '' : 's'}`} />
+        <StatCard icon={DoorOpen} label="Turned up (last 30 days)" loading={!s} value={t ? (t.recent_booked ? Math.round((t.recent_attended / t.recent_booked) * 100) : '-') : null} unit={t?.recent_booked ? '%' : undefined}
+          hint={t && (t.recent_booked ? `${t.recent_attended} of ${t.recent_booked} booked people were checked in` : 'No finished events in the last 30 days')} />
         <StatCard icon={Hourglass} label="On waitlists" loading={!s} value={t?.waiting}
           hint={t && (t.waiting ? 'People waiting for a seat to free up' : 'Nobody is waiting')} />
       </StatCardGroup>

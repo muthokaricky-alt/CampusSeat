@@ -1,5 +1,5 @@
 import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { Armchair, Moon, Sun, LogOut, LayoutDashboard, CalendarDays, Ticket, Users, BarChart3, ScrollText, CircleHelp } from 'lucide-react';
+import { Armchair, Moon, Sun, LogOut, LayoutDashboard, CalendarDays, Ticket, Users, BarChart3, ScrollText, ScanLine, CircleHelp } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
 import { Suspense, useEffect, useState } from 'react';
@@ -68,7 +68,7 @@ export function Shell() {
 // Grouped so the six destinations read as three small sets (easier to scan than one list).
 const groups = [
   ['Overview', [['/admin', 'Dashboard', LayoutDashboard, true]]],
-  ['Manage', [['/admin/events', 'Events', CalendarDays], ['/admin/bookings', 'Bookings', Ticket], ['/admin/users', 'Users', Users]]],
+  ['Manage', [['/admin/check-in', 'Check-in', ScanLine], ['/admin/events', 'Events', CalendarDays], ['/admin/bookings', 'Bookings', Ticket], ['/admin/users', 'Users', Users]]],
   ['Records', [['/admin/reports', 'Reports', BarChart3], ['/admin/audit', 'Audit logs', ScrollText]]],
 ];
 export function AdminLayout() {
