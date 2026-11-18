@@ -10,6 +10,7 @@ import { AppError } from './utils/errors.js';
 import { httpLogger } from './logger.js';
 import { health, ready } from './health.js';
 import { originCheck } from './middleware/auth.js';
+import { sentTo } from './mail/index.js';
 import authRoutes from './routes/auth.js';
 import schoolRoutes from './routes/schools.js';
 import eventRoutes from './routes/events.js';
@@ -29,6 +30,10 @@ export function createApp() {
 
   app.get('/api/health', health);
   app.get('/api/ready', ready);
+  // Automated tests read the emails the app "sent". Only exists with NODE_ENV=test and MAIL_DRIVER=memory.
+  if (config.isTest && config.mail.driver === 'memory') {
+    app.get('/api/_test/mail', (req, res) => res.json({ messages: sentTo(String(req.query.to || '')) }));
+  }
   app.use('/api/auth', authRoutes);
   app.use('/api/schools', schoolRoutes);
   app.use('/api/events', eventRoutes);

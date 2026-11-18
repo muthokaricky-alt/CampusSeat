@@ -8,6 +8,7 @@ import { audit } from '../utils/audit.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { revokeUserSessions } from '../sessions.js';
 import { unlock } from '../lockout.js';
+import { issueReset } from '../passwordReset.js';
 import { buildReport, toCsv } from '../utils/pdf.js';
 import { isoFields, localDayRangeUtc, localToday, offsetString, sqlToLocal } from '../utils/time.js';
 
@@ -77,6 +78,17 @@ router.post('/users/:id/unlock', asyncHandler(async (req, res) => {
   await unlock(id);
   await audit(req.user.user_id, 'ACCOUNT_UNLOCK', `Unlocked ${u.email}`);
   res.json({ ok: true });
+}));
+
+// Preferred over a temporary password: the person picks their own via an emailed link.
+router.post('/users/:id/send-reset-email', asyncHandler(async (req, res) => {
+  const id = v.int(req.params.id, 'id');
+  const [u] = await query('SELECT user_id, full_name, email FROM users WHERE user_id = ?', [id]);
+  if (!u) throw new AppError(404, 'NOT_FOUND', 'User not found.');
+  const r = await issueReset(u, req.ip);
+  if (!r) throw new AppError(429, 'TOO_MANY_RESETS', 'A reset link was already sent 3 times in the last hour. Try again later.');
+  await audit(req.user.user_id, 'ADMIN_SEND_RESET', `Sent a password reset link to ${u.email}`);
+  res.json({ ok: true, sent: await r.sent });
 }));
 
 router.post('/users/:id/reset-password', asyncHandler(async (req, res) => {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { KeyRound, LockOpen, Trash2 } from 'lucide-react';
+import { KeyRound, LockOpen, Mail, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { useToast } from '../../context/ToastContext.jsx';
@@ -26,6 +26,10 @@ export default function AdminUsers() {
   const reset = async () => {
     try { const r = await api.post(`/admin/users/${resetFor.user_id}/reset-password`); setTempPw(r.temporary_password); toast.ok('Password reset.'); }
     catch (e) { toast.error(e.message); setResetFor(null); }
+  };
+  const sendLink = async (u) => {
+    try { await api.post(`/admin/users/${u.user_id}/send-reset-email`); toast.ok(`Reset link sent to ${u.email}.`); }
+    catch (e) { toast.error(e.message); }
   };
   const unlock = async (u) => {
     try { await api.post(`/admin/users/${u.user_id}/unlock`); toast.ok(`${u.full_name} can log in again.`); load(); }
@@ -55,7 +59,8 @@ export default function AdminUsers() {
               <td>{u.bookings}</td><td>{fmtDate(u.created_at, { day: 'numeric', month: 'short', year: 'numeric' })}</td>
               <td className="actions">
                 {u.locked_until && <button className="btn secondary sm" onClick={() => unlock(u)}><LockOpen size={15} aria-hidden />Unlock</button>}
-                <button className="btn secondary sm" onClick={() => { setTempPw(''); setResetFor(u); }}><KeyRound size={15} aria-hidden />Reset password</button>
+                <button className="btn secondary sm" onClick={() => sendLink(u)}><Mail size={15} aria-hidden />Email reset link</button>
+                <button className="btn secondary sm" onClick={() => { setTempPw(''); setResetFor(u); }}><KeyRound size={15} aria-hidden />Temporary password</button>
                 <button className="btn danger sm" disabled={u.user_id === me.user_id} onClick={() => setDeleting(u)} aria-label={`Delete ${u.full_name}`}><Trash2 size={15} aria-hidden />Delete</button>
               </td>
             </tr>))}</tbody>

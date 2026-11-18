@@ -56,9 +56,30 @@ export const config = {
   // Account lockout after repeated failed logins (on top of the per-IP rate limits).
   lockoutThreshold: read('LOCKOUT_THRESHOLD', { def: 5, int: true, min: 3, max: 50 }),
   lockoutMinutes: read('LOCKOUT_MINUTES', { def: 15, int: true, min: 1, max: 1440 }),
+  // Password reset links expire after this many minutes.
+  resetTokenMinutes: read('RESET_TOKEN_MINUTES', { def: 30, int: true, min: 5, max: 24 * 60 }),
   // Raises every rate limit by this factor. Only for automated tests: refused in production.
   rateLimitScale: read('RATE_LIMIT_SCALE', { def: 1, int: true, min: 1, max: 1000 }),
 };
+
+// Outgoing email (password resets, waitlist news). See src/mail/index.js for the drivers.
+const mailDriver = read('MAIL_DRIVER', { prodRequired: true, def: NODE_ENV === 'test' ? 'memory' : 'console', oneOf: ['console', 'memory', 'smtp', 'resend'],
+  hint: 'Use "smtp" or "resend" in production.' });
+config.mail = {
+  driver: mailDriver,
+  from: read('MAIL_FROM', { def: 'CampusSeat <no-reply@campusseat.local>', required: ['smtp', 'resend'].includes(mailDriver),
+    hint: 'e.g. MAIL_FROM="CampusSeat <no-reply@your-domain>" (the domain must be verified with your provider).' }),
+  smtp: mailDriver === 'smtp' ? {
+    host: read('SMTP_HOST', { required: true }),
+    port: read('SMTP_PORT', { def: 587, int: true, min: 1, max: 65535 }),
+    secure: read('SMTP_SECURE', { def: 'false', oneOf: ['true', 'false'] }) === 'true',
+    user: read('SMTP_USER'),
+    pass: read('SMTP_PASS'),
+  } : null,
+  resendKey: mailDriver === 'resend' ? read('RESEND_API_KEY', { required: true, hint: 'Create one at resend.com > API keys.' }) : null,
+};
+if (isProd && mailDriver === 'console') problems.push('MAIL_DRIVER=console is for development only: it prints reset links to the log. Use smtp or resend.');
+if (mailDriver === 'memory' && NODE_ENV !== 'test') problems.push('MAIL_DRIVER=memory is only allowed when NODE_ENV=test.');
 
 // Database variables are read by db-config.js; validate them here so startup fails clearly.
 read('DB_HOST', { prodRequired: true });
