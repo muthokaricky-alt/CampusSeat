@@ -240,7 +240,10 @@ ok((await book(u1, ev.event_id, { ...u1.creds, student_number: 'NOPE999' })).dat
 ok((await call('POST', '/api/bookings', { event_id: ev.event_id, ...u1.creds })).status === 401, 'booking needs login');
 const card = await call('GET', `/api/bookings/${b1.data.booking.booking_id}/card`, null, u1.token);
 ok(card.ct.includes('pdf') && card.data.slice(0, 4).toString() === '%PDF', 'registration card is a PDF');
+const qr = await call('GET', `/api/bookings/${b1.data.booking.booking_id}/qr.svg`, null, u1.token);
+ok(qr.status === 200 && qr.ct.includes('image/svg+xml') && qr.data.toString().includes('<svg'), 'on-screen card QR code is an SVG');
 const u2 = await mkUser(2, comp);
+ok((await call('GET', `/api/bookings/${b1.data.booking.booking_id}/qr.svg`, null, u2.token)).status === 404, "cannot fetch someone else's QR code");
 ok((await call('GET', `/api/bookings/${b1.data.booking.booking_id}/card`, null, u2.token)).status === 404, "cannot download someone else's card");
 ok((await call('GET', '/api/bookings/mine', null, u1.token)).data.bookings.length === 1, 'my bookings lists the booking');
 
@@ -598,6 +601,35 @@ ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted ev
   await call('DELETE', `/api/events/${ae.event_id}`, null, admin.token);
   const delEv = (await logs(`action=DELETE_EVENT&entity_type=event&entity_id=${ae.event_id}`)).logs[0];
   ok(delEv?.before?.title === `Audit ${stamp}` && delEv.before.bookings_removed === 0, 'event deletion stores the removed event');
+}
+
+// --- client IP behind proxies (audit entries and rate limits use it)
+{
+  const ipFor = async (xff) => {
+    const r = await call('POST', '/api/auth/login', { email: `ip-${stamp}@test.local`, password: 'wrong-pass-1' }, null, { 'X-Forwarded-For': xff });
+    const rid = r.headers.get('x-request-id');
+    return (await call('GET', `/api/admin/audit-logs?search=${rid}`, null, admin.token)).data.logs[0]?.ip;
+  };
+  ok(await ipFor('203.0.113.9, 10.31.22.165') === '203.0.113.9', 'internal proxy hops are skipped: the visitor IP is recorded');
+  ok(await ipFor('198.51.100.7, 203.0.113.9, 10.0.0.5') === '203.0.113.9', 'a forged X-Forwarded-For entry cannot replace the real visitor IP');
+}
+
+// --- delivery: compression and caching
+{
+  const r = await fetch(`${BASE}/api/events?limit=50`, { headers: { 'Accept-Encoding': 'gzip' } });
+  ok(r.headers.get('content-encoding') === 'gzip', 'API responses are gzip-compressed');
+  const page = await fetch(`${BASE}/`);
+  if (page.status === 200 && (page.headers.get('content-type') || '').includes('html')) { // only when the frontend is built
+    const html = await page.text();
+    const asset = html.match(/\/assets\/[\w.-]+\.js/)?.[0];
+    const a = asset && await fetch(BASE + asset, { headers: { 'Accept-Encoding': 'gzip' } });
+    ok(page.headers.get('cache-control') === 'no-cache' && a?.headers.get('cache-control')?.includes('immutable') && a.headers.get('content-encoding') === 'gzip',
+      'index.html is revalidated; hashed assets are cached for a year and compressed');
+    const missing = await fetch(`${BASE}/assets/nope-123.js`);
+    ok(missing.status === 404 && !(await missing.text()).includes('id="root"'), 'a missing asset is a 404, not the app page');
+    const robots = await fetch(`${BASE}/robots.txt`);
+    ok(robots.status === 200 && (await robots.text()).startsWith('User-agent'), 'robots.txt is served');
+  } else console.log('SKIP  static asset checks (frontend not built)');
 }
 
 // --- operations: health, readiness, request ids, config validation

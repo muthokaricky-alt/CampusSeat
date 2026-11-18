@@ -3,6 +3,32 @@ import { X, Loader2 } from 'lucide-react';
 
 export const Spinner = () => <div className="loading" role="status"><span className="spinner" /><span className="sr-only">Loading</span></div>;
 
+/** Grey placeholder blocks with a soft shimmer (static under reduced motion). Keeps layout stable while loading. */
+export const Skeleton = ({ w = '100%', h = '1rem', r, style }) => (
+  <span className="skeleton" style={{ width: w, height: h, borderRadius: r, ...style }} aria-hidden="true" />
+);
+
+/** Placeholder with the same shape as an event card, so nothing jumps when the real cards arrive. */
+export const EventCardSkeleton = () => (
+  <div className="ticket skeleton-card" aria-hidden="true">
+    <div className="stub"><Skeleton w="2.2rem" h="2.2rem" r="8px" /></div>
+    <div className="body">
+      <Skeleton w="70%" h="1.2rem" /><Skeleton w="55%" h="0.85rem" style={{ marginTop: '0.6rem' }} />
+      <Skeleton w="40%" h="0.85rem" style={{ marginTop: '0.4rem' }} /><Skeleton h="0.5rem" style={{ marginTop: '1rem' }} />
+    </div>
+  </div>
+);
+
+/** Whole-page placeholder for lazily loaded pages. */
+export const PageSkeleton = ({ bare }) => (
+  <div className={bare ? '' : 'container page'} role="status" aria-busy="true">
+    <span className="sr-only">Loading</span>
+    <Skeleton w="40%" h="2.2rem" r="10px" />
+    <Skeleton w="60%" h="1rem" style={{ marginTop: '0.9rem' }} />
+    <Skeleton h="10rem" r="12px" style={{ marginTop: '1.5rem' }} />
+  </div>
+);
+
 export const Empty = ({ title, children }) => (
   <div className="empty"><h3>{title}</h3>{children && <p>{children}</p>}</div>
 );

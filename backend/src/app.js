@@ -1,6 +1,7 @@
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import compression from 'compression';
 import rateLimit from 'express-rate-limit';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -21,9 +22,14 @@ import auditRoutes from './routes/audit.js';
 
 export function createApp() {
   const app = express();
-  app.set('trust proxy', 1); // Render puts one proxy in front of the app
+  // Render has more than one proxy hop in front of the app, all on private addresses. Trust exactly
+  // those (loopback, link-local, private ranges), so req.ip is the first public address in
+  // X-Forwarded-For counting from the right: the visitor's address as added by Render's edge.
+  // A visitor cannot spoof it: anything they put in X-Forwarded-For sits to the left of that.
+  app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal']);
   app.disable('x-powered-by');
   app.use(httpLogger);
+  app.use(compression()); // gzip responses (JS, CSS, JSON, SVG); PDFs are already compressed and skipped by type
   app.use(helmet());
   if (!config.isProd) app.use(cors({ origin: config.clientOrigin }));
   app.use(express.json({ limit: '100kb' }));
@@ -48,10 +54,15 @@ export function createApp() {
   // Serve the built React app (npm run build in /frontend) from the same server.
   const dist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../frontend/dist');
   if (fs.existsSync(dist)) {
-    app.use(express.static(dist));
+    // Hashed build files never change: cache them for a year. Everything else (index.html) is revalidated,
+    // so a deploy is picked up on the next visit.
+    app.use('/assets', express.static(path.join(dist, 'assets'), { immutable: true, maxAge: '1y' }));
+    app.use(express.static(dist, { index: false, maxAge: 0 }));
     // Express 5 no longer accepts '*' as a path, so use a catch-all middleware for client-side routes.
     app.use((req, res, next) => {
-      if (req.method !== 'GET' || req.path.startsWith('/api')) return next();
+      // Missing build files get a real 404, not index.html served as JavaScript.
+      if (req.method !== 'GET' || req.path.startsWith('/api') || req.path.startsWith('/assets/')) return next();
+      res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(path.join(dist, 'index.html'));
     });
   }

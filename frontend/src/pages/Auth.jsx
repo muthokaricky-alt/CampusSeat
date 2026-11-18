@@ -71,35 +71,70 @@ export function Login() {
   );
 }
 
+// Client-side checks mirror the server's rules (the server still decides). Generous in what they accept:
+// spaces are trimmed, repeated spaces collapsed and the email lower-cased before checking and sending.
+const tidy = {
+  full_name: (s) => s.trim().replace(/\s+/g, ' '),
+  student_number: (s) => s.trim().replace(/\s+/g, ' ').toUpperCase(),
+  email: (s) => s.trim().toLowerCase(),
+  school_id: (s) => s,
+  password: (s) => s,
+};
+const RULES = {
+  full_name: (v) => (v.length < 2 ? 'Enter your full name (at least 2 characters).' : ''),
+  student_number: (v) => (v.length < 3 ? 'Enter your student or staff number, as on your ID card.' : ''),
+  email: (v) => (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v) ? 'Enter an email address like name@university.ac.ke.' : ''),
+  school_id: (v) => (!v ? 'Choose your school.' : ''),
+  password: (v) => (v.length < 8 ? 'Use at least 8 characters.' : !/[A-Za-z]/.test(v) || !/\d/.test(v) ? 'Add at least one letter and one number.' : ''),
+};
+
 export function Register() {
   const { user, register } = useAuth();
   const nav = useNavigate();
   const toast = useToast();
   const [schools, setSchools] = useState([]);
   const [f, setF] = useState({ full_name: '', student_number: '', email: '', school_id: '', password: '' });
+  const [local, setLocal] = useState({}); // errors found in the browser, shown once a field is left
   useEffect(() => { api.get('/schools').then((r) => setSchools(r.schools)).catch(() => {}); }, []);
-  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const set = (k) => (e) => {
+    setF({ ...f, [k]: e.target.value });
+    if (local[k]) setLocal({ ...local, [k]: RULES[k](tidy[k](e.target.value)) }); // clear the message as soon as it is fixed
+  };
+  const leave = (k) => () => {
+    const v = tidy[k](f[k]);
+    if (v !== f[k]) setF((x) => ({ ...x, [k]: v }));
+    if (f[k] !== '') setLocal((l) => ({ ...l, [k]: RULES[k](v) }));
+  };
   const { errors, formError, busy, submit } = useSubmit(async () => {
-    await register({ ...f, school_id: Number(f.school_id) || null });
+    const clean = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, tidy[k](v)]));
+    const found = Object.fromEntries(Object.keys(RULES).map((k) => [k, RULES[k](clean[k])]).filter(([, m]) => m));
+    setLocal(found);
+    if (Object.keys(found).length) {
+      document.getElementById(`f-${Object.keys(found)[0]}`)?.focus();
+      return;
+    }
+    await register({ ...clean, school_id: Number(clean.school_id) });
     toast.ok('Account created. You are logged in.');
     nav('/', { replace: true });
   });
+  const err = (k) => errors[k] || local[k];
   if (user) return <Navigate to="/" replace />;
   return (
     <div className="auth-wrap card">
       <h1 style={{ fontSize: '1.8rem' }}>Create your account</h1>
+      <p className="muted">One minute now, then every booking is a single tap.</p>
       {formError && <Alert>{formError}</Alert>}
       <form onSubmit={submit} noValidate style={{ marginTop: '1rem' }}>
-        <Field label="Full name" error={errors.full_name}>{(p) => <input {...p} autoComplete="name" value={f.full_name} onChange={set('full_name')} />}</Field>
-        <Field label="Student or staff number" error={errors.student_number}>{(p) => <input {...p} value={f.student_number} onChange={set('student_number')} />}</Field>
-        <Field label="Email" error={errors.email}>{(p) => <input {...p} type="email" autoComplete="email" value={f.email} onChange={set('email')} />}</Field>
-        <Field label="School" error={errors.school_id}>{(p) => (
-          <select {...p} value={f.school_id} onChange={set('school_id')}>
+        <Field id="f-full_name" label="Full name" error={err('full_name')}>{(p) => <input {...p} autoComplete="name" value={f.full_name} onChange={set('full_name')} onBlur={leave('full_name')} />}</Field>
+        <Field id="f-student_number" label="Student or staff number" error={err('student_number')} hint="As printed on your university ID.">{(p) => <input {...p} autoCapitalize="characters" value={f.student_number} onChange={set('student_number')} onBlur={leave('student_number')} />}</Field>
+        <Field id="f-email" label="Email" error={err('email')}>{(p) => <input {...p} type="email" inputMode="email" autoComplete="email" value={f.email} onChange={set('email')} onBlur={leave('email')} />}</Field>
+        <Field id="f-school_id" label="School" error={err('school_id')}>{(p) => (
+          <select {...p} value={f.school_id} onChange={(e) => { set('school_id')(e); setLocal((l) => ({ ...l, school_id: '' })); }}>
             <option value="">Select your school</option>
             {schools.map((s) => <option key={s.school_id} value={s.school_id}>{s.school_name}</option>)}
           </select>)}</Field>
-        <Field label="Password" error={errors.password} hint="At least 8 characters, with a letter and a number.">{(p) => <input {...p} type="password" autoComplete="new-password" value={f.password} onChange={set('password')} />}</Field>
-        <button className="btn block" disabled={busy}>{busy ? 'Creating account…' : 'Create account'}</button>
+        <Field id="f-password" label="Password" error={err('password')} hint="At least 8 characters, with a letter and a number.">{(p) => <input {...p} type="password" autoComplete="new-password" value={f.password} onChange={set('password')} onBlur={leave('password')} />}</Field>
+        <button className="btn block lg" disabled={busy}>{busy ? 'Creating account…' : 'Create account'}</button>
       </form>
       <p className="small" style={{ marginTop: '1rem' }}>Already registered? <Link to="/login">Log in</Link></p>
     </div>

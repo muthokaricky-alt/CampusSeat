@@ -2,7 +2,8 @@ import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { Armchair, Moon, Sun, LogOut, LayoutDashboard, CalendarDays, Ticket, Users, BarChart3, ScrollText, CircleHelp } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useToast } from '../context/ToastContext.jsx';
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
+import { PageSkeleton } from './ui.jsx';
 
 function ThemeToggle() {
   const [theme, setTheme] = useState(() => document.documentElement.getAttribute('data-theme') || 'light');
@@ -58,7 +59,7 @@ export function Shell() {
     <>
       <a className="skip-link" href="#main">Skip to content</a>
       <TopBar />
-      <main id="main" tabIndex={-1}><Outlet /></main>
+      <main id="main" tabIndex={-1}><Suspense fallback={<PageSkeleton />}><Outlet /></Suspense></main>
       <footer className="footer"><div className="container">CampusSeat. Book your seat at campus events.</div></footer>
     </>
   );
@@ -75,7 +76,7 @@ export function AdminLayout() {
       <nav className="side" aria-label="Admin">
         {links.map(([to, label, Icon, end]) => <NavLink key={to} to={to} end={end}><Icon size={18} aria-hidden />{label}</NavLink>)}
       </nav>
-      <section><Outlet /></section>
+      <section><Suspense fallback={<PageSkeleton bare />}><Outlet /></Suspense></section>
     </div>
   );
 }

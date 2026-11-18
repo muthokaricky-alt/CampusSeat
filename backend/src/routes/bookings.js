@@ -76,6 +76,18 @@ router.get('/mine', requireAuth, asyncHandler(async (req, res) => {
   res.json({ bookings: rows.map((r) => isoFields(r)), meta: lp.meta(total) });
 }));
 
+// QR code of the booking reference for the on-screen card (same data as on the PDF card).
+router.get('/:id/qr.svg', requireAuth, asyncHandler(async (req, res) => {
+  const id = v.int(req.params.id, 'id');
+  const [row] = await query('SELECT booking_ref, user_id FROM bookings WHERE booking_id = ?', [id]);
+  if (!row || (row.user_id !== req.user.user_id && req.user.role !== 'admin')) throw new AppError(404, 'NOT_FOUND', 'Booking not found.');
+  const QRCode = (await import('qrcode')).default;
+  const svg = await QRCode.toString(row.booking_ref, { type: 'svg', margin: 1, errorCorrectionLevel: 'M', color: { dark: '#0f172a', light: '#ffffff' } });
+  res.setHeader('Content-Type', 'image/svg+xml');
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.send(svg);
+}));
+
 router.get('/:id/card', requireAuth, asyncHandler(async (req, res) => {
   const id = v.int(req.params.id, 'id');
   const row = (await query(`${BOOKING_SELECT} WHERE b.booking_id = ?`, [id]))[0];
