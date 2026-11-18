@@ -1,6 +1,6 @@
 # CampusSeat
 
-Web system for reserving seats at university events. Students and staff browse events and book a seat online. Admins create events, limit them to schools, and see bookings, reports and audit logs. Software Engineering project, Group 4.
+Web system for reserving seats at university events. Students and staff browse events by type, save the ones they like, book a seat in one tap and keep their ticket on their phone, even offline. Admins create events, limit them to schools, check people in at the door, and see attendance, reports and audit logs. Software Engineering project, Group 4.
 
 ![CampusSeat events page](docs/screenshots/events-page.png)
 
@@ -19,7 +19,7 @@ Web system for reserving seats at university events. Students and staff browse e
 | Part | Choice | Why |
 | --- | --- | --- |
 | Database | MySQL (`campusseat_db` locally, [Aiven](https://aiven.io/) in production) | Matches the group's schema. InnoDB enforces foreign keys and gives row locks for safe booking. |
-| Backend | Node.js, Express | Same JavaScript on both sides. Prepared statements (`mysql2`), `bcryptjs` hashing, JWT login, `pdfkit` for cards and reports. |
+| Backend | Node.js, Express | Same JavaScript on both sides. Prepared statements (`mysql2`), `bcryptjs` hashing, cookie sessions, `pdfkit` for cards and reports. |
 | Frontend | React, Vite, React Router | Component and page structure, fast builds. Light and dark theme through CSS custom properties. |
 | Hosting | [Render](https://render.com/) (app) and Aiven (database) | Free tiers, one service serves both the API and the built frontend. |
 
@@ -38,7 +38,10 @@ Web system for reserving seats at university events. Students and staff browse e
 | Validation and error messages | Server rules in [`utils/validate.js`](backend/src/utils/validate.js); field-level messages in every form |
 | Help facilities | Help page in the app |
 | Design and motion | One-tap booking with an animated confirmation, quick filters, skeleton loading, restrained GSAP/Lenis motion and a desktop-only Vanta hero; reduced motion respected, WCAG AA, strict CSP. Rationale and where each UX principle is applied: [`docs/UX_NOTES.md`](docs/UX_NOTES.md) |
-| Registration card | PDF with QR code, plus on-screen card |
+| Registration card | PDF with QR code, plus on-screen card; works offline once opened (installable app, [`frontend/public/sw.js`](frontend/public/sw.js)) |
+| Door check-in and attendance | Admin > Check-in: scan the QR code (barcode scanner, phone or laptop camera) or type the reference; each card works once, mistakes can be undone. Attendance and no-shows on the dashboard and in reports ([`backend/src/routes/checkin.js`](backend/src/routes/checkin.js)) |
+| Event types and saved events | Every event has a category (careers, talk, workshop, academic, social, sports, other) with its own colour and cover art; filter by type; save events for later |
+| Edit your own details | Account page: name freely; student number and school ask for the password, and the school is locked while you hold upcoming bookings |
 
 ## API
 
@@ -54,7 +57,10 @@ Lists return `{ <items>: [...], meta: { page, limit, total, pages, sort, dir } }
 | GET | [`/ready`](https://campusseat.onrender.com/api/ready) | Public | Readiness: database reachable and migrations up to date |
 | GET | [`/schools`](https://campusseat.onrender.com/api/schools) | Public | List of schools for the register form |
 | GET | [`/events`](https://campusseat.onrender.com/api/events) | Public | Browse and search events (paginated, `sort=date|title|seats|created`) |
+| GET | `/events?category=career,talk&saved=1` | Public (`saved`: logged in) | Filter by event type, or show only my saved events |
 | GET | `/events/:id` | Public | One event with seats left and waitlist length |
+| PUT, DELETE | `/events/:id/save` | Logged in | Save an event for later, or unsave it |
+| PATCH | `/account/profile` | Logged in | Change own name, student number or school (the last two need `password`) |
 | POST | `/auth/register` | Public | Create an account (starts a session) |
 | POST | `/auth/login` | Public | Log in; returns `{ mfa_required, challenge }` instead when two-factor is on |
 | POST | `/auth/2fa` | Public | Second login step: app code or backup code |
@@ -70,9 +76,12 @@ Lists return `{ <items>: [...], meta: { page, limit, total, pages, sort, dir } }
 | DELETE | `/bookings/:id` | Owner or admin | Cancel a booking (owner: until `CANCEL_CUTOFF_HOURS` before the start) |
 | POST, DELETE | `/events/:id/waitlist` | Logged in | Join or leave the waitlist of a full event |
 | GET | `/bookings/:id/card` | Logged in | Registration card (PDF with QR code) |
-| GET | `/bookings`, `/events/:id/waitlist` | Admin | All bookings, an event's waitlist |
+| GET | `/bookings`, `/events/:id/waitlist` | Admin | All bookings (`attended=1|0` filter), an event's waitlist |
 | POST, PUT, DELETE | `/events`, `/events/:id` | Admin | Create, edit, delete events (more capacity promotes waiting people) |
-| GET | `/admin/stats`, `/admin/event-options` | Admin | Dashboard numbers, event picker |
+| GET | `/admin/stats`, `/admin/event-options` | Admin | Dashboard numbers (incl. attendance), event picker |
+| GET | `/admin/check-in/events` | Admin | Events open for check-in now, with booked and checked-in counts |
+| POST | `/admin/check-in` | Admin | Check a booking in: `{ ref, event_id }`; refuses wrong event, used cards, or outside the window |
+| DELETE | `/admin/check-in/:bookingId` | Admin | Undo a check-in |
 | GET, PATCH, DELETE | `/admin/users`, `/admin/users/:id` | Admin | Manage users |
 | POST | `/admin/users/:id/send-reset-email`, `/reset-password`, `/unlock` | Admin | Email a reset link, set a temporary password, unlock a locked account |
 | GET | `/admin/audit-logs`, `/admin/audit-logs/:id` | Admin | Audit trail with filters (`actor`, `person`, `action=A,B`, `entity_type`, `entity_id`, `from`, `to`, `search`) |

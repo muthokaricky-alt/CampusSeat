@@ -32,6 +32,16 @@ The system tracks available seats in real time so an event is never overbooked, 
 
 ## 
 
+## **Additional Functional Requirements (added after Deliverable 2, Nov 2026)**
+
+| \# | Requirement | Who it serves |
+| :---- | :---- | :---- |
+| **FR6** | The system shall let admins check people in at the door by scanning the QR code on the registration card or typing its reference, shall accept each card only once and only for its own event within the check-in window, shall allow a mistaken check-in to be undone, and shall report attendance and no-shows. | **Admins** |
+| **FR7** | The system shall classify every event by type (careers, talk, workshop, academic, social, sports, other), show the type visually, and let users filter events by type. | **Users, admins** |
+| **FR8** | The system shall let users save events for later and list their saved events. | **Users** |
+| **FR9** | The system shall let users correct their own name, student number and school, asking for their password for the last two and refusing a school change while they hold upcoming bookings or waitlist places. | **Users** |
+| **FR10** | The system shall keep a user's registration cards available on their phone without an internet connection once they have been opened, and shall remove those copies when the user logs out. | **Users** |
+
 ## **Non-Functional Requirements**
 
 | \# | Category | Requirement |
