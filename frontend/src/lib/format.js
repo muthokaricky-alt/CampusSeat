@@ -54,3 +54,8 @@ export const addDays = (ymd, n) => {
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
 };
+
+/** Clock time in Nairobi for an ISO/UTC timestamp, e.g. "21:40". */
+export const fmtClock = (dt) => (dt
+  ? new Intl.DateTimeFormat('en-GB', { timeZone: APP_TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(String(dt).includes('T') ? dt : `${String(dt).replace(' ', 'T')}Z`))
+  : '');

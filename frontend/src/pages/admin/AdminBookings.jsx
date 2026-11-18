@@ -1,19 +1,21 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Download, Search, XCircle } from 'lucide-react';
+import { CircleCheck, Download, Search, XCircle } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { Alert, ConfirmDialog, useDebounced } from '../../components/ui.jsx';
 import { SortHeader, TableFooter, TableSkeleton, listState } from '../../components/admin/DataTable.jsx';
-import { fmtDate, fmtDateTime } from '../../lib/format.js';
+import { fmtClock, fmtDate, fmtDateTime } from '../../lib/format.js';
 
-const COLS = 6;
+const ALL_COLS = 7;
+const ATTENDED = [['', 'All'], ['1', 'Checked in'], ['0', 'Not yet']];
 
 export default function AdminBookings() {
   const toast = useToast();
   const [params, setParams] = useSearchParams();
   const st = listState(params, { sort: 'booked_at', dir: 'desc', limit: 50 });
   const eventId = st.get('event_id');
+  const attended = st.get('attended');
   const [q, setQ] = useState(st.get('search'));
   const search = useDebounced(q);
   const [events, setEvents] = useState([]);
@@ -33,6 +35,7 @@ export default function AdminBookings() {
   const load = () => {
     const p = new URLSearchParams({ page: st.page, limit: st.limit, sort: st.sort, dir: st.dir });
     if (eventId) p.set('event_id', eventId);
+    if (attended) p.set('attended', attended);
     if (st.get('search')) p.set('search', st.get('search'));
     setData((d) => (d ? { ...d, loading: true } : d));
     return api.get(`/bookings?${p}`).then((r) => { setData(r); setError(''); }).catch((e) => setError(e.message));
@@ -50,6 +53,7 @@ export default function AdminBookings() {
   const sortProps = { sort: st.sort, dir: st.dir, onSort: (sort, dir) => update({ sort, dir }) };
   const chosen = events.find((e) => String(e.event_id) === eventId);
   const rows = data?.bookings;
+  const COLS = eventId ? ALL_COLS - 1 : ALL_COLS; // one event chosen: its title would repeat on every row
 
   return (
     <div>
@@ -65,6 +69,11 @@ export default function AdminBookings() {
         <div className="field search"><label htmlFor="bq"><span className="label">Search</span></label>
           <div className="search-box"><Search size={18} aria-hidden /><input id="bq" type="search" placeholder="Name, student number, email or reference" value={q} onChange={(e) => setQ(e.target.value)} /></div></div>
       </div>
+      <div className="chips" role="group" aria-label="At the door" style={{ marginBottom: '1rem' }}>
+        {ATTENDED.map(([v, label]) => (
+          <button key={label} className={`chip ${attended === v ? 'on' : ''}`} aria-pressed={attended === v} onClick={() => update({ attended: v })}>{label}</button>
+        ))}
+      </div>
       {error && <Alert>{error} <button className="linklike" onClick={load}>Try again</button></Alert>}
 
       <div className={`table-wrap ${data?.loading ? 'is-loading' : ''}`}>
@@ -73,8 +82,9 @@ export default function AdminBookings() {
             <SortHeader label="Reference" sortKey="ref" {...sortProps} />
             <SortHeader label="Person" sortKey="name" {...sortProps} />
             <SortHeader label="School" sortKey="school" {...sortProps} />
-            <SortHeader label="Event" sortKey="event" {...sortProps} />
+            {!eventId && <SortHeader label="Event" sortKey="event" {...sortProps} />}
             <SortHeader label="Booked" sortKey="booked_at" defaultDir="desc" {...sortProps} />
+            <th scope="col">At the door</th>
             <th><span className="sr-only">Actions</span></th>
           </tr></thead>
           {!rows && !error && <TableSkeleton cols={COLS} />}
@@ -87,14 +97,17 @@ export default function AdminBookings() {
               )}
               {rows.map((b) => (
                 <tr key={b.booking_id}>
-                  <td><code className="k">{b.booking_ref}</code></td>
-                  <td><strong>{b.full_name}</strong><br /><span className="muted small">{b.email} · {b.student_number}</span></td>
+                  <td className="nowrap"><code className="k">{b.booking_ref}</code></td>
+                  <td><strong>{b.full_name}</strong><br /><span className="muted small wrap-any">{b.email} · {b.student_number}</span></td>
                   <td className="small">{b.school_name}</td>
-                  <td>{b.title}<br /><span className="muted small">{fmtDate(b.event_date, { day: 'numeric', month: 'short' })}</span></td>
+                  {!eventId && <td>{b.title}<br /><span className="muted small">{fmtDate(b.event_date, { day: 'numeric', month: 'short' })}</span></td>}
                   <td className="small nowrap">{fmtDateTime(b.booked_at)}</td>
+                  <td className="small nowrap">{b.checked_in_at
+                    ? <span className="badge ok" title={`Checked in ${fmtDateTime(b.checked_in_at)}`}><CircleCheck size={13} aria-hidden />In {fmtClock(b.checked_in_at)}</span>
+                    : <span className="muted">Not yet</span>}</td>
                   <td className="actions">
-                    <button className="btn ghost sm" onClick={() => card(b)} aria-label={`Download card ${b.booking_ref}`}><Download size={15} aria-hidden />Card</button>
-                    <button className="btn ghost sm danger-text" onClick={() => setCancelling(b)} aria-label={`Cancel booking ${b.booking_ref}`}><XCircle size={15} aria-hidden />Cancel</button>
+                    <button className="btn ghost sm icon-only" onClick={() => card(b)} aria-label={`Download card ${b.booking_ref}`} title="Download card"><Download size={16} aria-hidden /></button>
+                    <button className="btn ghost sm icon-only danger-text" onClick={() => setCancelling(b)} aria-label={`Cancel booking ${b.booking_ref}`} title="Cancel booking"><XCircle size={16} aria-hidden /></button>
                   </td>
                 </tr>
               ))}

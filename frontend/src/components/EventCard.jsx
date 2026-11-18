@@ -45,7 +45,7 @@ export default function EventCard({ event: e }) {
     <article className={`ticket2 ${e.is_past ? 'dim' : ''}`} data-reveal>
       <div className="t2-art">
         <CoverArt category={e.category} seed={e.event_id} />
-        <span className="t2-cat"><cat.icon size={13} aria-hidden />{cat.label}</span>
+        <span className="t2-cat"><cat.icon size={13} aria-hidden />{cat.one}</span>
         <SaveButton event={e} />
         <span className="t2-date" aria-hidden>
           <span className="wk">{d.toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' })}</span>
@@ -54,7 +54,7 @@ export default function EventCard({ event: e }) {
         </span>
       </div>
       <div className="t2-body">
-        <h3><Link to={`/events/${e.event_id}`}>{e.title}<span className="sr-only">, {cat.label}, {longDate}</span></Link></h3>
+        <h3><Link to={`/events/${e.event_id}`}>{e.title}<span className="sr-only">, {cat.one}, {longDate}</span></Link></h3>
         <div className="meta">
           <span><Clock size={15} aria-hidden /><span className="sr-only">Time: </span>{fmtTime(e.start_time)} to {fmtTime(e.end_time)}</span>
           <span><MapPin size={15} aria-hidden /><span className="sr-only">Venue: </span>{e.venue}</span>

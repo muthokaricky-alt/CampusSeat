@@ -1,9 +1,9 @@
 import { forwardRef, useState } from 'react';
-import { CalendarPlus, Download, Printer, Ticket, XCircle } from 'lucide-react';
+import { CalendarPlus, CircleCheck, Download, Printer, QrCode, Ticket, XCircle } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { fmtDate, fmtTime, fmtDateTime } from '../lib/format.js';
 import { useToast } from '../context/ToastContext.jsx';
-import { ConfirmDialog } from './ui.jsx';
+import { ConfirmDialog, Modal } from './ui.jsx';
 
 /** Calendar file for the event (times in UTC, so every calendar app shows the right local time). */
 function downloadIcs(b) {
@@ -26,7 +26,10 @@ function downloadIcs(b) {
 const RegistrationCard = forwardRef(function RegistrationCard({ booking: b, highlight, onCancelled }, ref) {
   const toast = useToast();
   const [confirming, setConfirming] = useState(false);
+  const [showing, setShowing] = useState(false);
   const started = b.starts_at && new Date(b.starts_at) <= new Date();
+  const ended = b.ends_at && new Date(b.ends_at) < new Date();
+  const used = !!b.checked_in_at;
   const download = async () => {
     try { await api.file(`/bookings/${b.booking_id}/card`, { filename: `registration-card-${b.booking_ref}.pdf` }); toast.ok('Registration card downloaded.'); }
     catch (e) { toast.error(e.message); }
@@ -66,14 +69,26 @@ const RegistrationCard = forwardRef(function RegistrationCard({ booking: b, high
       <div className="cut" aria-hidden data-part="cut" />
       <div className="reg-ref" data-part="ref">
         <div><span className="small muted">Booking reference</span><div className="ref">{b.booking_ref}</div></div>
-        <div className="small muted">Booked {fmtDateTime(b.booked_at)}</div>
+        {used
+          ? <span className="badge ok"><CircleCheck size={14} aria-hidden />Used at the door {fmtDateTime(b.checked_in_at)}</span>
+          : <div className="small muted">Booked {fmtDateTime(b.booked_at)}</div>}
       </div>
       <footer className="reg-actions no-print" data-part="actions">
-        <button className="btn" onClick={download}><Download size={18} aria-hidden />Download PDF</button>
-        {b.starts_at && !started && <button className="btn secondary" onClick={() => downloadIcs(b)}><CalendarPlus size={18} aria-hidden />Add to calendar</button>}
-        <button className="btn secondary" onClick={print}><Printer size={18} aria-hidden />Print</button>
-        {onCancelled && !started && <button className="btn ghost" onClick={() => setConfirming(true)}><XCircle size={18} aria-hidden />Cancel booking</button>}
+        {!used && !ended && <button className="btn" onClick={() => setShowing(true)}><QrCode size={18} aria-hidden />Show at the door</button>}
+        <button className={`btn ${!used && !ended ? 'secondary sm' : ''}`} onClick={download}><Download size={16} aria-hidden />Download PDF</button>
+        {b.starts_at && !started && <button className="btn secondary sm" onClick={() => downloadIcs(b)}><CalendarPlus size={16} aria-hidden />Add to calendar</button>}
+        <button className="btn secondary sm icon-only" onClick={print} aria-label="Print card" title="Print card"><Printer size={16} aria-hidden /></button>
+        {onCancelled && !started && !used && <button className="btn ghost sm push-end" onClick={() => setConfirming(true)}><XCircle size={16} aria-hidden />Cancel booking</button>}
       </footer>
+      <Modal open={showing} title="Show this at the door" onClose={() => setShowing(false)}
+        footer={<button className="btn" onClick={() => setShowing(false)}>Done</button>}>
+        <div className="door-pass">
+          <img src={`/api/bookings/${b.booking_id}/qr.svg`} alt={`QR code for booking ${b.booking_ref}`} />
+          <div className="ref">{b.booking_ref}</div>
+          <p><strong>{b.full_name}</strong> &middot; {b.title}</p>
+          <p className="small muted">Turn your screen brightness up. Staff scan the code or type the reference. It works once.</p>
+        </div>
+      </Modal>
       <ConfirmDialog open={confirming} danger title="Cancel this booking?" confirmLabel="Cancel booking" onClose={() => setConfirming(false)} onConfirm={cancel}
         message={`Your seat for "${b.title}" will be released and given to the next person on the waitlist. You can book again later if seats are left.`} />
     </article>
