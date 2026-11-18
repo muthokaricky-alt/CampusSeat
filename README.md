@@ -38,7 +38,7 @@ Web system for reserving seats at university events. Students and staff browse e
 | Validation and error messages | Server rules in [`utils/validate.js`](backend/src/utils/validate.js); field-level messages in every form |
 | Help facilities | Help page in the app |
 | Design and motion | One-tap booking with an animated confirmation, quick filters, skeleton loading, restrained GSAP/Lenis motion and a desktop-only Vanta hero; reduced motion respected, WCAG AA, strict CSP. Rationale and where each UX principle is applied: [`docs/UX_NOTES.md`](docs/UX_NOTES.md) |
-| Registration card | PDF with QR code, plus on-screen card; works offline once opened (installable app, [`frontend/public/sw.js`](frontend/public/sw.js)) |
+| Registration card | PDF with QR code, plus on-screen card with a large 'Show at the door' QR; works offline once opened (installable app, [`frontend/public/sw.js`](frontend/public/sw.js)) |
 | Door check-in and attendance | Admin > Check-in: scan the QR code (barcode scanner, phone or laptop camera) or type the reference; each card works once, mistakes can be undone. Attendance and no-shows on the dashboard and in reports ([`backend/src/routes/checkin.js`](backend/src/routes/checkin.js)) |
 | Event types and saved events | Every event has a category (careers, talk, workshop, academic, social, sports, other) with its own colour and cover art; filter by type; save events for later |
 | Edit your own details | Account page: name freely; student number and school ask for the password, and the school is locked while you hold upcoming bookings |
