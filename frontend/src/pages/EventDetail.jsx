@@ -46,6 +46,15 @@ export default function EventDetail() {
     } finally { setBusy(false); }
   };
 
+  const waitlist = async (action) => {
+    setBusy(true); setFormError('');
+    try {
+      if (action === 'join') { const r = await api.post(`/events/${event.event_id}/waitlist`); toast.ok(`You are number ${r.waitlist.position} on the waitlist.`); }
+      else { await api.del(`/events/${event.event_id}/waitlist`); toast.ok('You left the waitlist.'); }
+    } catch (err) { setFormError(err.message); toast.error(err.message); }
+    finally { setBusy(false); load(); }
+  };
+
   if (error) return <div className="container page"><Alert>{error}</Alert><p style={{ marginTop: '1rem' }}><Link to="/">Back to events</Link></p></div>;
   if (!event) return <div className="container page"><Spinner /></div>;
 
@@ -57,13 +66,29 @@ export default function EventDetail() {
       <Link className="btn block" to="/login" state={{ from: loc.pathname }}>Log in to book</Link>
       <p className="small">No account? <Link to="/register">Register</Link></p></div>);
   } else if (event.my_booking) {
-    panel = mine ? <RegistrationCard booking={mine} /> : <Spinner />;
+    panel = mine ? <RegistrationCard booking={mine} onCancelled={() => { setMine(null); load(); }} /> : <Spinner />;
   } else if (event.is_past) {
     panel = <div className="card"><Alert type="warn">This event has already taken place.</Alert></div>;
   } else if (event.eligible === false) {
     panel = <div className="card"><Alert type="warn">This event is open to {restrictionLabel(event)} only. Your school is {user.school_name}.</Alert></div>;
+  } else if (event.my_waitlist) {
+    panel = (
+      <div className="card stack">
+        <h2>You are on the waitlist</h2>
+        <p>Your place in the queue: <strong className="big-num">{event.my_waitlist.position}</strong> of {event.waitlist_count}.</p>
+        <p className="muted small">If a seat frees up it is booked for you automatically and we email you. Nothing else to do.</p>
+        <button className="btn secondary block" disabled={busy} onClick={() => waitlist('leave')}>Leave the waitlist</button>
+      </div>
+    );
   } else if (full) {
-    panel = <div className="card"><Alert type="bad">This event is full. No seats remain.</Alert></div>;
+    panel = (
+      <div className="card stack">
+        <h2>This event is full</h2>
+        <p className="muted">{event.waitlist_count ? `${event.waitlist_count} ${event.waitlist_count === 1 ? 'person is' : 'people are'} waiting.` : 'Nobody is waiting yet.'} Join the waitlist and you get the next free seat automatically.</p>
+        {formError && <Alert>{formError}</Alert>}
+        <button className="btn block" disabled={busy} onClick={() => waitlist('join')}>{busy ? 'Joining\u2026' : 'Join the waitlist'}</button>
+      </div>
+    );
   } else {
     panel = (
       <form className="card" onSubmit={book} noValidate>

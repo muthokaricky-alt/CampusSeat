@@ -22,3 +22,15 @@ ${button(link, 'Choose a new password')}<p style="color:#4a5568;font-size:14px">
 <p style="color:#4a5568;font-size:14px">If you did not ask for this, ignore this email: your password stays the same.</p>`),
   };
 }
+
+export function waitlistPromoted({ name, title, date, time, ref, link }) {
+  const first = String(name || '').split(' ')[0] || 'there';
+  const when = `${new Date(`${String(date).slice(0, 10)}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'UTC' })} at ${String(time).slice(0, 5)}`;
+  return {
+    subject: `You have a seat: ${title}`,
+    text: `Hi ${first},\n\nGood news: a seat opened up for "${title}" (${when}) and it is now yours.\nBooking reference: ${ref}\n\nYour registration card is ready:\n${link}\n\nCan't make it any more? Cancel from My bookings so the next person on the waitlist gets the seat.\n`,
+    html: layout('A seat opened up for you', `<p>Hi ${esc(first)},</p><p>Good news: a seat opened up for <strong>${esc(title)}</strong> (${esc(when)}) and it is now yours.</p>
+<p>Booking reference: <strong style="font-size:18px;letter-spacing:.04em">${esc(ref)}</strong></p>${button(link, 'View my registration card')}
+<p style="color:#4a5568;font-size:14px">Can't make it any more? Cancel from My bookings so the next person on the waitlist gets the seat.</p>`),
+  };
+}

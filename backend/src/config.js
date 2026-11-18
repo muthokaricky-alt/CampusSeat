@@ -58,6 +58,8 @@ export const config = {
   // Encrypts administrators' two-factor secrets at rest: 32 random bytes, base64.
   totpEncKey: read('TOTP_ENC_KEY', { prodRequired: true,
     hint: `Generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` }),
+  // People can cancel their own booking until this many hours before the event starts.
+  cancelCutoffHours: read('CANCEL_CUTOFF_HOURS', { def: 2, int: true, min: 0, max: 24 * 14 }),
   // Password reset links expire after this many minutes.
   resetTokenMinutes: read('RESET_TOKEN_MINUTES', { def: 30, int: true, min: 5, max: 24 * 60 }),
   // Raises every rate limit by this factor. Only for automated tests: refused in production.

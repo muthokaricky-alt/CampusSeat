@@ -3,9 +3,10 @@ import { query, withTransaction } from '../db.js';
 import { AppError, asyncHandler } from '../utils/errors.js';
 import * as v from '../utils/validate.js';
 import { audit } from '../utils/audit.js';
-import { optionalAuth, requireAdmin } from '../middleware/auth.js';
+import { optionalAuth, requireAdmin, requireAuth } from '../middleware/auth.js';
 import { isoFields, localToday, zonedToDate, toSqlUtc } from '../utils/time.js';
 import { listParams } from '../utils/list.js';
+import * as seats from '../seats.js';
 
 const router = Router();
 
@@ -16,6 +17,7 @@ const EVENT_SELECT = `
     e.capacity - (SELECT COUNT(*) FROM bookings b WHERE b.event_id = e.event_id) AS seats_remaining,
     (SELECT GROUP_CONCAT(s.school_name ORDER BY s.school_name SEPARATOR '||') FROM event_schools es JOIN schools s ON s.school_id = es.school_id WHERE es.event_id = e.event_id) AS restricted_names,
     (SELECT GROUP_CONCAT(es.school_id) FROM event_schools es WHERE es.event_id = e.event_id) AS restricted_ids,
+    (SELECT COUNT(*) FROM waitlist w WHERE w.event_id = e.event_id AND w.status = 'waiting') AS waitlist_count,
     (e.ends_at < UTC_TIMESTAMP()) AS is_past
   FROM events e`;
 
@@ -25,6 +27,7 @@ function shape(row, user) {
     ...row,
     booked: Number(row.booked),
     seats_remaining: Number(row.seats_remaining),
+    waitlist_count: Number(row.waitlist_count),
     is_past: !!Number(row.is_past),
     restricted_to: row.restricted_names ? row.restricted_names.split('||') : [],
     school_ids: ids,
@@ -37,9 +40,15 @@ function shape(row, user) {
 
 async function withMine(events, user) {
   if (!user || !events.length) return events;
-  const rows = await query('SELECT event_id, booking_id, booking_ref FROM bookings WHERE user_id = ?', [user.user_id]);
+  const ids = events.map((e) => e.event_id);
+  const marks = ids.map(() => '?').join(',');
+  const rows = await query(`SELECT event_id, booking_id, booking_ref FROM bookings WHERE user_id = ? AND event_id IN (${marks})`, [user.user_id, ...ids]);
+  const waits = await query(
+    `SELECT w.event_id, (SELECT COUNT(*) FROM waitlist w2 WHERE w2.event_id = w.event_id AND w2.status = 'waiting' AND w2.waitlist_id <= w.waitlist_id) AS position
+       FROM waitlist w WHERE w.user_id = ? AND w.status = 'waiting' AND w.event_id IN (${marks})`, [user.user_id, ...ids]);
   const mine = new Map(rows.map((r) => [r.event_id, r]));
-  return events.map((e) => ({ ...e, my_booking: mine.get(e.event_id) || null }));
+  const waiting = new Map(waits.map((r) => [r.event_id, { position: Number(r.position) }]));
+  return events.map((e) => ({ ...e, my_booking: mine.get(e.event_id) || null, my_waitlist: waiting.get(e.event_id) || null }));
 }
 
 // Browse / search upcoming events (admins can pass past=1 to include past ones).
@@ -123,19 +132,77 @@ router.post('/', requireAdmin, asyncHandler(async (req, res) => {
 router.put('/:id', requireAdmin, asyncHandler(async (req, res) => {
   const id = v.int(req.params.id, 'id');
   const e = await parseEvent(req.body || {}, { requireFuture: false });
-  await withTransaction(async (conn) => {
-    const [[cur]] = await conn.execute('SELECT event_id FROM events WHERE event_id = ? FOR UPDATE', [id]);
+  const promoted = await withTransaction(async (conn) => {
+    const cur = await seats.lockEvent(conn, id); // lock first: see seats.js
     if (!cur) throw new AppError(404, 'NOT_FOUND', 'Event not found.');
-    const [[{ n }]] = await conn.execute('SELECT COUNT(*) AS n FROM bookings WHERE event_id = ?', [id]);
+    const n = await seats.bookedCount(conn, id);
     if (e.capacity < n) throw new AppError(409, 'CAPACITY_TOO_LOW', `Capacity cannot be lower than the ${n} seats already booked.`, { field: 'capacity' });
     await conn.execute(
       'UPDATE events SET title=?, description=?, venue=?, event_date=?, start_time=?, end_time=?, starts_at=?, ends_at=?, capacity=? WHERE event_id=?',
       [e.title, e.description, e.venue, e.event_date, e.start_time, e.end_time, e.starts_at, e.ends_at, e.capacity, id]);
     await setSchools(conn, id, e.school_ids);
+    // More seats (or a later date): give them to the waitlist straight away.
+    const [[isPast]] = await conn.execute('SELECT ? < UTC_TIMESTAMP() AS p', [e.ends_at]);
+    return seats.promoteWaitlist(conn, { ...cur, title: e.title, capacity: e.capacity, is_past: !!Number(isPast.p) });
   });
-  await audit(req.user.user_id, 'EDIT_EVENT', `Event #${id} "${e.title}"`);
+  seats.notifyPromoted({ title: e.title, event_date: e.event_date, start_time: e.start_time }, promoted);
+  await audit(req.user.user_id, 'EDIT_EVENT', `Event #${id} "${e.title}"${promoted.length ? `; ${promoted.length} promoted from the waitlist` : ''}`);
   const [row] = await query(`${EVENT_SELECT} WHERE e.event_id = ?`, [id]);
   res.json({ event: shape(row, req.user) });
+}));
+
+/* ---------- Waitlist ---------- */
+// Join the waitlist of a full event. Same lock and checks as booking a seat.
+router.post('/:id/waitlist', requireAuth, asyncHandler(async (req, res) => {
+  const id = v.int(req.params.id, 'id');
+  const [me] = await query('SELECT user_id, school_id FROM users WHERE user_id = ?', [req.user.user_id]);
+  try {
+    const out = await withTransaction(async (conn) => {
+      const event = await seats.lockEvent(conn, id);
+      if (!event) throw new AppError(404, 'NOT_FOUND', 'Event not found.');
+      if (event.is_past) throw new AppError(409, 'EVENT_PAST', 'This event has already taken place.');
+      const [dup] = await conn.execute('SELECT 1 FROM bookings WHERE user_id = ? AND event_id = ?', [me.user_id, id]);
+      if (dup.length) throw new AppError(409, 'DUPLICATE_BOOKING', 'You already have a seat for this event.');
+      const allowed = await seats.allowedSchools(conn, id);
+      if (allowed.length && !allowed.some((s) => s.school_id === me.school_id))
+        throw new AppError(403, 'NOT_ELIGIBLE', `This event is open to ${allowed.map((s) => s.school_name).join(', ')} only.`);
+      if ((await seats.bookedCount(conn, id)) < event.capacity)
+        throw new AppError(409, 'SEATS_AVAILABLE', 'There are seats left, so you can book one straight away.');
+      const [[existing]] = await conn.execute('SELECT waitlist_id, status FROM waitlist WHERE event_id = ? AND user_id = ? FOR UPDATE', [id, me.user_id]);
+      if (existing?.status === 'waiting') throw new AppError(409, 'ALREADY_WAITING', 'You are already on the waitlist for this event.');
+      if (existing) await conn.execute('DELETE FROM waitlist WHERE waitlist_id = ?', [existing.waitlist_id]); // rejoin goes to the back
+      const [ins] = await conn.execute('INSERT INTO waitlist (event_id, user_id) VALUES (?, ?)', [id, me.user_id]);
+      const position = await seats.waitlistPosition(conn, id, ins.insertId);
+      await audit(me.user_id, 'WAITLIST_JOIN', `Event #${id} "${event.title}", position ${position}`, conn);
+      return { waitlist_id: ins.insertId, event_id: id, position };
+    });
+    res.status(201).json({ waitlist: out });
+  } catch (err) {
+    if (err.code === 'ER_DUP_ENTRY') throw new AppError(409, 'ALREADY_WAITING', 'You are already on the waitlist for this event.');
+    throw err;
+  }
+}));
+
+router.delete('/:id/waitlist', requireAuth, asyncHandler(async (req, res) => {
+  const id = v.int(req.params.id, 'id');
+  const left = await withTransaction(async (conn) => {
+    const event = await seats.lockEvent(conn, id);
+    if (!event) throw new AppError(404, 'NOT_FOUND', 'Event not found.');
+    const [r] = await conn.execute("DELETE FROM waitlist WHERE event_id = ? AND user_id = ? AND status = 'waiting'", [id, req.user.user_id]);
+    if (r.affectedRows) await audit(req.user.user_id, 'WAITLIST_LEAVE', `Event #${id} "${event.title}"`, conn);
+    return r.affectedRows;
+  });
+  if (!left) throw new AppError(404, 'NOT_WAITING', 'You are not on the waitlist for this event.');
+  res.json({ ok: true });
+}));
+
+// Admin: who is waiting, in order.
+router.get('/:id/waitlist', requireAdmin, asyncHandler(async (req, res) => {
+  const id = v.int(req.params.id, 'id');
+  const rows = await query(
+    `SELECT w.waitlist_id, w.created_at, u.user_id, u.full_name, u.email, u.student_number
+       FROM waitlist w JOIN users u ON u.user_id = w.user_id WHERE w.event_id = ? AND w.status = 'waiting' ORDER BY w.waitlist_id LIMIT 1000`, [id]);
+  res.json({ waitlist: rows.map((r, i) => isoFields({ ...r, position: i + 1 })), meta: { page: 1, limit: 1000, total: rows.length, pages: 1, sort: 'position', dir: 'asc' } });
 }));
 
 router.delete('/:id', requireAdmin, asyncHandler(async (req, res) => {
