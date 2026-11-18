@@ -24,7 +24,13 @@ export function AuthProvider({ children }) {
   const accept = (r) => { setCsrfToken(r.csrf_token); setUser(r.user); return r.user; };
   const value = {
     user, loading, isAdmin: user?.role === 'admin',
-    login: async (email, password) => accept(await api.post('/auth/login', { email, password })),
+    // Returns the user, or { mfa_required, challenge } when the account has two-factor login on.
+    login: async (email, password) => {
+      const r = await api.post('/auth/login', { email, password });
+      return r.mfa_required ? r : accept(r);
+    },
+    verify2fa: async (challenge, code) => accept(await api.post('/auth/2fa', { challenge, code })),
+    refresh: async () => { const r = await api.get('/auth/session'); setCsrfToken(r.csrf_token); setUser(r.user); },
     register: async (data) => accept(await api.post('/auth/register', data)),
     logout: async () => { try { await api.post('/auth/logout'); } catch { /* already signed out */ } clear(); },
     logoutEverywhere: async () => { try { await api.post('/auth/logout-all'); } catch { /* already signed out */ } clear(); },

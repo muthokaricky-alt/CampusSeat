@@ -10,6 +10,7 @@ import { requireAuth } from '../middleware/auth.js';
 import { clearSessionCookie, loadSession, revokeSession, revokeUserSessions, startSession } from '../sessions.js';
 import { config } from '../config.js';
 import * as lockout from '../lockout.js';
+import * as twoFactor from '../twoFactor.js';
 
 const router = Router();
 // Rate limits slow down password guessing and mass sign-ups. RATE_LIMIT_SCALE lets tests raise them.
@@ -26,6 +27,7 @@ const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10); // keeps login ti
 const publicUser = (u) => ({
   user_id: u.user_id, full_name: u.full_name, student_number: u.student_number,
   email: u.email, school_id: u.school_id, school_name: u.school_name, role: u.role,
+  two_factor: !!u.totp_enabled_at,
 });
 const loadFull = async (id) =>
   (await query('SELECT u.*, s.school_name FROM users u JOIN schools s ON s.school_id = u.school_id WHERE u.user_id = ?', [id]))[0];
@@ -77,13 +79,53 @@ router.post('/login', loginLimiter, asyncHandler(async (req, res) => {
     if (r.locked && user) await audit(user.user_id, 'ACCOUNT_LOCKED', `Locked for ${r.minutes} min after ${config.lockoutThreshold} failed logins`);
     throw new AppError(401, 'INVALID_CREDENTIALS', 'Incorrect email or password.');
   }
+  if (user.totp_enabled_at) {
+    // Password is right; the session starts only after the second factor (POST /auth/2fa).
+    const challenge = await twoFactor.createChallenge(user.user_id);
+    await audit(user.user_id, 'LOGIN_PASSWORD_OK', 'Waiting for the two-factor code');
+    return res.json({ mfa_required: true, challenge });
+  }
   if (user.failed_logins || user.lock_count) await lockout.recordSuccess(user.user_id);
   await audit(user.user_id, 'LOGIN');
+  res.json(await finishLogin(req, res, user));
+}));
+
+async function finishLogin(req, res, user) {
   // Logging in from a browser that still holds another session ends that one first.
   const previous = await loadSession(req);
   if (previous?.session) await revokeSession(previous.session.hash);
   const csrf_token = await startSession(res, user.user_id, req);
-  res.json({ user: publicUser(user), csrf_token });
+  return { user: publicUser(user), csrf_token };
+}
+
+// Second step of login for accounts with two-factor on: a 6-digit app code or a backup code.
+router.post('/2fa', loginLimiter, asyncHandler(async (req, res) => {
+  const challenge = req.body?.challenge;
+  const c = await twoFactor.findChallenge(challenge);
+  if (!c) throw new AppError(401, 'CHALLENGE_EXPIRED', 'This login attempt has expired. Enter your email and password again.');
+  const lockedFor = await lockout.lockRemaining(c.userId);
+  if (lockedFor > 0) {
+    await twoFactor.endChallenge(challenge);
+    throw new AppError(429, 'ACCOUNT_LOCKED', lockout.lockedMessage(lockedFor), { retry_after_s: lockedFor });
+  }
+  const method = await twoFactor.verifySecondFactor(c.userId, req.body?.code);
+  if (!method) {
+    const left = await twoFactor.failChallenge(challenge);
+    const r = await lockout.recordFailure(c.userId); // wrong codes count toward the account lock too
+    await audit(c.userId, 'LOGIN_FAILED', 'Wrong two-factor code');
+    if (r.locked) await audit(c.userId, 'ACCOUNT_LOCKED', `Locked for ${r.minutes} min after failed two-factor codes`);
+    if (left <= 0) throw new AppError(401, 'CHALLENGE_EXPIRED', 'Too many wrong codes. Enter your email and password again.');
+    throw new AppError(401, 'INVALID_2FA_CODE', 'That code is not right. Check the time on your phone, or use a backup code.', { field: 'code', attempts_left: left });
+  }
+  await twoFactor.endChallenge(challenge);
+  await lockout.recordSuccess(c.userId);
+  const user = await loadFull(c.userId);
+  if (method === 'backup') {
+    const st = await twoFactor.status(c.userId);
+    await audit(c.userId, '2FA_BACKUP_USED', `Backup code used; ${st.backup_codes_left} left`);
+  }
+  await audit(c.userId, 'LOGIN', `With two-factor (${method === 'backup' ? 'backup code' : 'app code'})`);
+  res.json(await finishLogin(req, res, user));
 }));
 
 router.post('/logout', requireAuth, asyncHandler(async (req, res) => {

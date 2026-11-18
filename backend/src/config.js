@@ -36,7 +36,6 @@ function read(name, o = {}) {
   return raw;
 }
 
-const SECRET_HINT = 'Generate one with: node -e "console.log(require(\'crypto\').randomBytes(48).toString(\'hex\'))"';
 
 read('NODE_ENV', { oneOf: ['development', 'test', 'production'] });
 export const config = {
@@ -56,6 +55,9 @@ export const config = {
   // Account lockout after repeated failed logins (on top of the per-IP rate limits).
   lockoutThreshold: read('LOCKOUT_THRESHOLD', { def: 5, int: true, min: 3, max: 50 }),
   lockoutMinutes: read('LOCKOUT_MINUTES', { def: 15, int: true, min: 1, max: 1440 }),
+  // Encrypts administrators' two-factor secrets at rest: 32 random bytes, base64.
+  totpEncKey: read('TOTP_ENC_KEY', { prodRequired: true,
+    hint: `Generate one with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` }),
   // Password reset links expire after this many minutes.
   resetTokenMinutes: read('RESET_TOKEN_MINUTES', { def: 30, int: true, min: 5, max: 24 * 60 }),
   // Raises every rate limit by this factor. Only for automated tests: refused in production.
@@ -89,6 +91,9 @@ read('DB_NAME', { prodRequired: true });
 read('DB_PORT', { int: true, min: 1, max: 65535 });
 read('DB_SSL', { oneOf: ['true', 'false'] });
 
+if (config.totpEncKey !== undefined && Buffer.from(config.totpEncKey, 'base64').length !== 32) {
+  problems.push('TOTP_ENC_KEY must be 32 random bytes encoded as base64 (44 characters).');
+}
 if (isProd && !config.cookieSecure) problems.push('COOKIE_SECURE must not be false in production (session cookies need HTTPS).');
 if (isProd && config.rateLimitScale !== 1) problems.push('RATE_LIMIT_SCALE must not be set in production (it weakens the login rate limits).');
 

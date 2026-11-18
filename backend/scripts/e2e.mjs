@@ -151,6 +151,68 @@ ok((await call('GET', '/api/auth/me', null, u1.token)).data.user.email === `t${s
   }
 }
 
+// --- two-factor login (TOTP) for administrators
+{
+  const T = await import('../src/totp.js');
+  const s1 = Buffer.from('12345678901234567890');
+  ok(T.totp(s1, 59e3, 8) === '94287082' && T.totp(s1, 1111111109e3, 8) === '07081804' && T.totp(s1, 20000000000e3, 8) === '65353130', 'TOTP matches the RFC 6238 test vectors');
+  ok((await call('POST', '/api/account/2fa/setup', { password: 'Passw0rd2' }, u1.token)).status === 403, 'two-factor setup is for administrators');
+  const a5 = await mkUser(5, comp);
+  const em5 = `t${stamp}5@test.local`;
+  await call('PATCH', `/api/admin/users/${a5.user.user_id}`, { role: 'admin' }, admin.token);
+  ok((await call('GET', '/api/auth/me', null, a5.token)).status === 401, 'role change logs the person out');
+  let ad = (await login(em5, 'Passw0rd1')).token;
+  ok((await call('POST', '/api/account/2fa/setup', { password: 'wrong' }, ad)).data.error?.code === 'WRONG_PASSWORD', 'setup asks for the password again');
+  const setup = (await call('POST', '/api/account/2fa/setup', { password: 'Passw0rd1' }, ad)).data;
+  ok(/^data:image\/png;base64,/.test(setup.qr_data_url) && /^otpauth:\/\/totp\/CampusSeat:/.test(setup.otpauth_uri) && setup.secret.replace(/ /g, '').length === 32, 'setup returns a QR code (data URL) and the secret');
+  const secret = T.base32Decode(setup.secret);
+  ok((await call('POST', '/api/account/2fa/enable', { code: '000000' }, ad)).data.error?.code === 'INVALID_2FA_CODE', 'wrong confirmation code does not turn 2FA on');
+  ok((await login(em5, 'Passw0rd1')).res.data.mfa_required === undefined, 'unconfirmed setup does not affect login');
+  ad = (await login(em5, 'Passw0rd1')).token;
+  const en = await call('POST', '/api/account/2fa/enable', { code: T.totp(secret) }, ad);
+  ok(en.status === 200 && en.data.backup_codes.length === 10 && /^[A-Z2-9]{5}-[A-Z2-9]{5}$/.test(en.data.backup_codes[0]), '2FA turns on with a correct code and gives 10 backup codes');
+  const codes = en.data.backup_codes;
+  ok((await call('GET', '/api/auth/me', null, ad)).data.user.two_factor === true, 'user shows two_factor: true');
+
+  const step1 = await login(em5, 'Passw0rd1');
+  ok(step1.res.data.mfa_required === true && step1.res.data.challenge && !step1.token.cookie && !step1.res.data.user, 'password alone no longer logs in: a challenge is returned, no session cookie');
+  const wrong = await call('POST', '/api/auth/2fa', { challenge: step1.res.data.challenge, code: '123456' });
+  ok(wrong.data.error?.code === 'INVALID_2FA_CODE' && wrong.data.error.attempts_left === 4, 'wrong code is refused with attempts left');
+  const nextCode = T.hotp(secret, T.stepAt() + 1); // next time step (one step of drift is allowed)
+  const good = await call('POST', '/api/auth/2fa', { challenge: step1.res.data.challenge, code: nextCode });
+  ok(good.status === 200 && good.data.user?.email === em5 && readSetCookie(good.raw), 'correct app code completes login and sets the session cookie');
+  ok((await call('POST', '/api/auth/2fa', { challenge: step1.res.data.challenge, code: nextCode })).data.error?.code === 'CHALLENGE_EXPIRED', 'a challenge cannot be used twice');
+  const step2 = await login(em5, 'Passw0rd1');
+  ok((await call('POST', '/api/auth/2fa', { challenge: step2.res.data.challenge, code: nextCode })).data.error?.code === 'INVALID_2FA_CODE', 'an app code cannot be replayed');
+  const bk = await call('POST', '/api/auth/2fa', { challenge: step2.res.data.challenge, code: ` ${codes[0].toLowerCase().replace('-', ' ')} ` });
+  ok(bk.status === 200, 'a backup code works (case, spaces and dash ignored)');
+  const step3 = await login(em5, 'Passw0rd1');
+  ok((await call('POST', '/api/auth/2fa', { challenge: step3.res.data.challenge, code: codes[0] })).data.error?.code === 'INVALID_2FA_CODE', 'each backup code works only once');
+  ok((await call('POST', '/api/auth/2fa', { challenge: 'made-up', code: nextCode })).data.error?.code === 'CHALLENGE_EXPIRED', 'unknown challenge is refused');
+  ad = sessionFrom(bk);
+  ok((await call('GET', '/api/account/2fa', null, ad)).data.backup_codes_left === 9, 'status shows backup codes left');
+  ok((await call('GET', '/api/admin/audit-logs?action=2FA_BACKUP_USED', null, admin.token)).data.logs.some((l) => l.email === em5), 'backup code use is audited');
+  const regen = await call('POST', '/api/account/2fa/backup-codes', { password: 'Passw0rd1', code: codes[1] }, ad);
+  ok(regen.data.backup_codes?.length === 10 && !regen.data.backup_codes.includes(codes[2]), 'backup codes can be regenerated (password + code)');
+  const fresh = regen.data.backup_codes;
+  await call('POST', `/api/admin/users/${a5.user.user_id}/unlock`, null, admin.token); // reset the failure count from the checks above
+  const step4 = await login(em5, 'Passw0rd1');
+  ok((await call('POST', '/api/auth/2fa', { challenge: step4.res.data.challenge, code: codes[2] })).data.error?.code === 'INVALID_2FA_CODE', 'old backup codes stop working after regeneration');
+
+  // wrong codes count toward the account lock: 4 more here make 5 in a row
+  let last;
+  for (let i = 0; i < 4; i++) last = await call('POST', '/api/auth/2fa', { challenge: step4.res.data.challenge, code: '000000' });
+  ok(last.data.error?.code === 'CHALLENGE_EXPIRED', 'after 5 wrong codes the challenge is dropped');
+  ok((await call('POST', '/api/auth/login', { email: em5, password: 'Passw0rd1' })).data.error?.code === 'ACCOUNT_LOCKED', 'wrong two-factor codes lock the account like wrong passwords');
+  await call('POST', `/api/admin/users/${a5.user.user_id}/unlock`, null, admin.token);
+
+  ok((await call('POST', '/api/account/2fa/disable', { password: 'Passw0rd1', code: '000000' }, ad)).data.error?.code === 'INVALID_2FA_CODE', 'turning 2FA off needs a valid code');
+  ok((await call('POST', '/api/account/2fa/disable', { password: 'Passw0rd1', code: fresh[0] }, ad)).status === 200, 'turning 2FA off with password + code');
+  const plain = await login(em5, 'Passw0rd1');
+  ok(plain.res.status === 200 && plain.res.data.user && !plain.res.data.mfa_required, 'after turning it off, password login works again');
+  ok((await call('GET', '/api/admin/audit-logs?action=2FA_ENABLE', null, admin.token)).data.logs.some((l) => l.email === em5), '2FA changes are audited');
+}
+
 // --- events (admin CRUD)
 const future = new Date(Date.now() + 9 * 864e5).toLocaleDateString('en-CA');
 const mk = (extra = {}) => ({ title: `E2E Event ${stamp}`, description: 'test', venue: 'Room 1', event_date: future, start_time: '10:00', end_time: '12:00', capacity: 5, school_ids: [], ...extra });
