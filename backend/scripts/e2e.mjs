@@ -589,6 +589,17 @@ ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted ev
   ok(delEv?.before?.title === `Audit ${stamp}` && delEv.before.bookings_removed === 0, 'event deletion stores the removed event');
 }
 
+// --- client IP behind proxies (audit entries and rate limits use it)
+{
+  const ipFor = async (xff) => {
+    const r = await call('POST', '/api/auth/login', { email: `ip-${stamp}@test.local`, password: 'wrong-pass-1' }, null, { 'X-Forwarded-For': xff });
+    const rid = r.headers.get('x-request-id');
+    return (await call('GET', `/api/admin/audit-logs?search=${rid}`, null, admin.token)).data.logs[0]?.ip;
+  };
+  ok(await ipFor('203.0.113.9, 10.31.22.165') === '203.0.113.9', 'internal proxy hops are skipped: the visitor IP is recorded');
+  ok(await ipFor('198.51.100.7, 203.0.113.9, 10.0.0.5') === '203.0.113.9', 'a forged X-Forwarded-For entry cannot replace the real visitor IP');
+}
+
 // --- operations: health, readiness, request ids, config validation
 const h = await call('GET', '/api/health');
 ok(h.status === 200 && h.data.db?.ok === true && typeof h.data.db.latency_ms === 'number', 'health reports database ok with latency');

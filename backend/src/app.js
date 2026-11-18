@@ -21,7 +21,11 @@ import auditRoutes from './routes/audit.js';
 
 export function createApp() {
   const app = express();
-  app.set('trust proxy', 1); // Render puts one proxy in front of the app
+  // Render has more than one proxy hop in front of the app, all on private addresses. Trust exactly
+  // those (loopback, link-local, private ranges), so req.ip is the first public address in
+  // X-Forwarded-For counting from the right: the visitor's address as added by Render's edge.
+  // A visitor cannot spoof it: anything they put in X-Forwarded-For sits to the left of that.
+  app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal']);
   app.disable('x-powered-by');
   app.use(httpLogger);
   app.use(helmet());
