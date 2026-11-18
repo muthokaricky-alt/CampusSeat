@@ -6,10 +6,11 @@ import { AppError, asyncHandler } from '../utils/errors.js';
 import * as v from '../utils/validate.js';
 import { audit } from '../utils/audit.js';
 import { requireAuth, signToken } from '../middleware/auth.js';
+import { config } from '../config.js';
 
 const router = Router();
 // Rate limits slow down password guessing and mass sign-ups. RATE_LIMIT_SCALE lets tests raise them.
-const scale = Number(process.env.RATE_LIMIT_SCALE || 1);
+const scale = config.rateLimitScale;
 const makeLimiter = (limit, opts = {}) => rateLimit({
   windowMs: 15 * 60 * 1000, limit: limit * scale, standardHeaders: true, legacyHeaders: false, ...opts,
   message: { error: { code: 'RATE_LIMITED', message: 'Too many attempts. Please wait a few minutes and try again.' } },
