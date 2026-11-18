@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
-import { query, pool } from '../db.js';
+import { query, pool, withTransaction } from '../db.js';
+import { hashToken, issueReset } from '../passwordReset.js';
 import { AppError, asyncHandler } from '../utils/errors.js';
 import * as v from '../utils/validate.js';
 import { audit } from '../utils/audit.js';
@@ -19,7 +20,7 @@ const makeLimiter = (limit, opts = {}) => rateLimit({
 });
 const loginLimiter = makeLimiter(20, { skipSuccessfulRequests: true }); // only failed logins count
 const registerLimiter = makeLimiter(30);
-const resetLimiter = makeLimiter(10, { skipSuccessfulRequests: true });
+const resetLimiter = makeLimiter(10); // every request counts: they all answer 200
 const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10); // keeps login timing similar for unknown emails
 
 const publicUser = (u) => ({
@@ -112,15 +113,44 @@ router.get('/session', asyncHandler(async (req, res) => {
   res.json({ user: publicUser(await loadFull(s.user.user_id)), csrf_token: s.session.csrf });
 }));
 
-// Forgot password: the person proves who they are with the email AND student number on the account.
+// Forgot password: emails a single-use link. The answer is the same whether or not the account
+// exists, and the email is sent in the background so the response time does not tell either.
 router.post('/forgot-password', resetLimiter, asyncHandler(async (req, res) => {
   const em = v.email(req.body?.email);
-  const sn = v.str(req.body?.student_number, 'student_number', { min: 3, max: 30, label: 'Student/staff number' });
-  const pw = v.password(req.body?.new_password, 'new_password');
-  const rows = await query('SELECT user_id FROM users WHERE email = ? AND student_number = ?', [em, sn]);
-  if (!rows.length) throw new AppError(404, 'NO_MATCH', 'No account matches that email and student/staff number.');
-  await query('UPDATE users SET password_hash = ? WHERE user_id = ?', [await bcrypt.hash(pw, 12), rows[0].user_id]);
-  await audit(rows[0].user_id, 'PASSWORD_RESET', 'Password reset via forgot-password');
+  const [user] = await query('SELECT user_id, full_name, email FROM users WHERE email = ?', [em]);
+  if (user) {
+    const r = await issueReset(user, req.ip);
+    await audit(user.user_id, 'PASSWORD_RESET_REQUEST', r ? 'Reset link emailed' : 'Ignored: 3 requests in the last hour');
+  }
+  res.json({ ok: true, message: 'If an account uses that email, we have sent it a link to reset the password. Check your inbox (and spam folder).' });
+}));
+
+const findReset = async (conn, token, lock = false) => {
+  if (typeof token !== 'string' || token.length < 20 || token.length > 100) return null;
+  const [[row]] = await conn.execute(
+    `SELECT reset_id, user_id FROM password_resets
+      WHERE token_hash = ? AND used_at IS NULL AND expires_at > UTC_TIMESTAMP()${lock ? ' FOR UPDATE' : ''}`, [hashToken(token)]);
+  return row || null;
+};
+const BAD_TOKEN = () => new AppError(400, 'INVALID_RESET_TOKEN', 'This reset link is invalid, has already been used or has expired. Request a new one.');
+
+// Lets the reset page say up front whether the link still works.
+router.post('/reset-password/verify', resetLimiter, asyncHandler(async (req, res) => {
+  res.json({ valid: !!(await findReset(pool, req.body?.token)) });
+}));
+
+router.post('/reset-password', resetLimiter, asyncHandler(async (req, res) => {
+  const pw = v.password(req.body?.new_password, 'new_password'); // validate first: a weak password does not use up the link
+  const hash = await bcrypt.hash(pw, 12);
+  const userId = await withTransaction(async (conn) => {
+    const row = await findReset(conn, req.body?.token, true); // row lock: the same link cannot be used twice at once
+    if (!row) throw BAD_TOKEN();
+    await conn.execute('UPDATE password_resets SET used_at = UTC_TIMESTAMP() WHERE user_id = ? AND used_at IS NULL', [row.user_id]);
+    await conn.execute('UPDATE users SET password_hash = ?, failed_logins = 0, lock_count = 0, locked_until = NULL WHERE user_id = ?', [hash, row.user_id]);
+    await revokeUserSessions(row.user_id, { conn }); // log out everywhere: whoever knew the old password is out
+    return row.user_id;
+  });
+  await audit(userId, 'PASSWORD_RESET', 'Password reset with an emailed link');
   res.json({ ok: true });
 }));
 

@@ -208,9 +208,54 @@ ok((await call('GET', '/api/auth/me', null, u2.token)).status === 401, "admin pa
 const u2again = await login(`t${stamp}2@test.local`, reset.data.temporary_password);
 ok(u2again.res.status === 200, 'user logs in with temporary password');
 u2.token = u2again.token;
-const fp = await call('POST', '/api/auth/forgot-password', { email: `t${stamp}2@test.local`, student_number: u2.creds.student_number, new_password: 'NewPass123' });
-ok(fp.status === 200, 'forgot password with email + student number');
-ok((await call('POST', '/api/auth/forgot-password', { email: `t${stamp}2@test.local`, student_number: 'wrong', new_password: 'NewPass123' })).status === 404, 'forgot password rejects wrong student number');
+// --- forgot password: emailed single-use, expiring link (replaces "email + student number")
+{
+  const em2 = `t${stamp}2@test.local`;
+  const inbox = async (to) => (await call('GET', `/api/_test/mail?to=${encodeURIComponent(to)}`)).data.messages;
+  const tokenOf = (m) => m.text.match(/#token=([A-Za-z0-9_-]+)/)?.[1];
+  const known = await call('POST', '/api/auth/forgot-password', { email: em2 });
+  const unknown = await call('POST', '/api/auth/forgot-password', { email: `nobody-${stamp}@test.local` });
+  ok(known.status === 200 && unknown.status === 200 && known.data.message === unknown.data.message, 'forgot password answers the same for known and unknown emails');
+  const old = await call('POST', '/api/auth/forgot-password', { email: em2, student_number: u2.creds.student_number, new_password: 'NewPass123' });
+  ok(old.status === 200 && (await login(em2, 'NewPass123')).res.status === 401, 'old email + student number reset no longer changes the password');
+  const mails = await inbox(em2);
+  ok(mails.length === 2 && /reset-password#token=/.test(mails[0].text) && mails[0].html.includes('Choose a new password'), 'reset email is sent with a link (text and HTML)');
+  ok((await inbox(`nobody-${stamp}@test.local`)).length === 0, 'no email for an unknown address');
+  const [first, second] = mails.map(tokenOf);
+  ok((await call('POST', '/api/auth/reset-password/verify', { token: first })).data.valid === false, 'a newer request invalidates the earlier link');
+  ok((await call('POST', '/api/auth/reset-password/verify', { token: second })).data.valid === true, 'the latest link is valid');
+  ok((await call('POST', '/api/auth/reset-password', { token: second, new_password: 'weak' })).data.error?.field === 'new_password'
+    && (await call('POST', '/api/auth/reset-password/verify', { token: second })).data.valid === true, 'a weak new password is rejected without using up the link');
+  const before = u2.token;
+  const done = await call('POST', '/api/auth/reset-password', { token: second, new_password: 'NewPass123' });
+  ok(done.status === 200, 'password is reset with the emailed link');
+  ok((await call('GET', '/api/auth/me', null, before)).status === 401, 'resetting the password logs out existing sessions');
+  ok((await login(em2, reset.data.temporary_password)).res.status === 401, 'old password stops working');
+  const fresh = await login(em2, 'NewPass123');
+  ok(fresh.res.status === 200, 'new password works');
+  u2.token = fresh.token;
+  ok((await call('POST', '/api/auth/reset-password', { token: second, new_password: 'Another123' })).data.error?.code === 'INVALID_RESET_TOKEN', 'a reset link works only once');
+  ok((await call('POST', '/api/auth/reset-password', { token: 'x'.repeat(43), new_password: 'Another123' })).data.error?.code === 'INVALID_RESET_TOKEN', 'a made-up token is refused');
+  if (process.env.E2E_DB !== '0') {
+    const mysql = (await import('mysql2/promise')).default;
+    const { dbConfig } = await import('../src/db-config.js');
+    const db = await mysql.createConnection(dbConfig);
+    await db.execute('DELETE pr FROM password_resets pr JOIN users u ON u.user_id = pr.user_id WHERE u.email = ?', [em2]); // clear the hourly limit
+    await call('POST', '/api/auth/forgot-password', { email: em2 });
+    const t3 = tokenOf((await inbox(em2)).at(-1));
+    const [[stored]] = await db.execute('SELECT COUNT(*) AS n FROM password_resets WHERE token_hash = ?', [t3]);
+    ok(Number(stored.n) === 0, 'database stores only a hash of the reset token');
+    await db.execute("UPDATE password_resets pr JOIN users u ON u.user_id = pr.user_id SET pr.expires_at = UTC_TIMESTAMP() - INTERVAL 1 SECOND WHERE u.email = ?", [em2]);
+    ok((await call('POST', '/api/auth/reset-password', { token: t3, new_password: 'Another123' })).data.error?.code === 'INVALID_RESET_TOKEN', 'an expired reset link is refused');
+    for (let i = 0; i < 3; i++) await call('POST', '/api/auth/forgot-password', { email: em2 });
+    const count = (await inbox(em2)).length;
+    await call('POST', '/api/auth/forgot-password', { email: em2 });
+    ok((await inbox(em2)).length === count, 'at most 3 reset emails per account per hour');
+    await db.end();
+  }
+  const adm = await call('POST', `/api/admin/users/${u1.user.user_id}/send-reset-email`, null, admin.token);
+  ok(adm.status === 200 && (await inbox(`t${stamp}1@test.local`)).length === 1, 'admin can send a user a reset link');
+}
 ok((await call('DELETE', `/api/admin/users/${u1.user.user_id}`, null, admin.token)).data.error?.code === 'IN_USE', 'cannot delete a user who has bookings');
 ok((await call('DELETE', `/api/bookings/${b1.data.booking.booking_id}`, null, admin.token)).status === 200, 'admin cancels a booking');
 ok((await call('GET', `/api/events/${ev.event_id}`)).data.event.seats_remaining === 1, 'cancelled seat becomes available again');

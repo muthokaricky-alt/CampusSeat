@@ -11,7 +11,7 @@ export default function Help() {
       <details><summary>Why can I not book an event?</summary>
         <ul><li><strong>Event full:</strong> every seat is taken.</li><li><strong>Not open to your school:</strong> the organiser limited the event to certain schools.</li><li><strong>Already booked:</strong> each person can hold one seat per event.</li><li><strong>Event ended:</strong> past events cannot be booked.</li></ul></details>
       <details><summary>I forgot my password</summary>
-        <p>Select Forgot your password on the log in page. Enter your email and student or staff number to set a new password. If that does not work, ask an administrator to reset it.</p></details>
+        <p>Select Forgot your password on the log in page and enter your email. We send you a link to choose a new password; it works once and expires after 30 minutes. Choosing a new password logs you out on every device. No email after a few minutes? Check your spam folder, or ask an administrator to send you a new link.</p></details>
       <details><summary>What do I bring to the event?</summary>
         <p>Bring your registration card (printed or on your phone). The booking reference identifies your seat.</p></details>
       <h2 style={{ marginTop: '1.5rem' }}>For administrators</h2>
