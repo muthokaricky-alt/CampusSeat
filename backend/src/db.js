@@ -11,6 +11,10 @@ export const pool = mysql.createPool({
   charset: 'utf8mb4',
 });
 
+// Hosted MySQL (e.g. Aiven) runs on UTC. Make every connection use Kenyan time (UTC+3)
+// so NOW(), booked_at and the "event already passed" check match the times people see.
+pool.pool.on('connection', (conn) => conn.query("SET time_zone = '+03:00'"));
+
 export async function query(sql, params = []) {
   const [rows] = await pool.execute(sql, params);
   return rows;
