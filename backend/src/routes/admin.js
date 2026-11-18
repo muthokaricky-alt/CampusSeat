@@ -18,30 +18,59 @@ const shiftDays = (ymd, n) => { const d = new Date(`${ymd}T00:00:00Z`); d.setUTC
 router.use(requireAdmin);
 
 router.get('/stats', asyncHandler(async (_req, res) => {
+  const tz = offsetString();
+  const today = localToday();
+  // Day boundaries are Nairobi days, compared in UTC.
+  const { start: start14 } = localDayRangeUtc(shiftDays(today, -13), null); // 14 days for sparklines
+  const { start: start7 } = localDayRangeUtc(shiftDays(today, -6), null); // this week (last 7 days)
   const [totals] = await query(`SELECT
       (SELECT COUNT(*) FROM events WHERE ends_at >= UTC_TIMESTAMP()) AS upcoming_events,
       (SELECT COUNT(*) FROM bookings) AS total_bookings,
       (SELECT COUNT(*) FROM users) AS total_users,
-      (SELECT COUNT(*) FROM events) AS total_events`);
+      (SELECT COUNT(*) FROM events) AS total_events,
+      (SELECT COUNT(*) FROM waitlist w JOIN events e ON e.event_id = w.event_id WHERE w.status = 'waiting' AND e.ends_at >= UTC_TIMESTAMP()) AS waiting,
+      (SELECT COALESCE(SUM(capacity), 0) FROM events WHERE ends_at >= UTC_TIMESTAMP()) AS upcoming_seats,
+      (SELECT COUNT(*) FROM bookings b JOIN events e ON e.event_id = b.event_id WHERE e.ends_at >= UTC_TIMESTAMP()) AS upcoming_booked`);
+  const [week] = await query(`SELECT
+      SUM(booked_at >= ?) AS bookings, SUM(booked_at < ?) AS bookings_prev
+    FROM bookings WHERE booked_at >= ?`, [start7, start7, start14]);
+  const [users] = await query(`SELECT
+      SUM(created_at >= ?) AS users, SUM(created_at < ?) AS users_prev
+    FROM users WHERE created_at >= ?`, [start7, start7, start14]);
   const almostFull = await query(`
     SELECT e.event_id, e.title, e.event_date, e.capacity,
-           (SELECT COUNT(*) FROM bookings b WHERE b.event_id = e.event_id) AS booked
+           (SELECT COUNT(*) FROM bookings b WHERE b.event_id = e.event_id) AS booked,
+           (SELECT COUNT(*) FROM waitlist w WHERE w.event_id = e.event_id AND w.status = 'waiting') AS waiting
     FROM events e
     WHERE e.ends_at >= UTC_TIMESTAMP()
       AND (SELECT COUNT(*) FROM bookings b WHERE b.event_id = e.event_id) >= e.capacity * 0.8
-    ORDER BY e.event_date LIMIT 10`);
+    ORDER BY e.starts_at LIMIT 10`);
   const recent = await query(`
-    SELECT b.booking_id, b.booking_ref, b.booked_at, u.full_name, e.title
+    SELECT b.booking_id, b.booking_ref, b.booked_at, u.full_name, e.title, e.event_id
     FROM bookings b JOIN users u ON u.user_id = b.user_id JOIN events e ON e.event_id = b.event_id
     ORDER BY b.booked_at DESC, b.booking_id DESC LIMIT 8`);
-  // Bookings per Nairobi calendar day for the last 7 days.
-  const tz = offsetString();
-  const { start } = localDayRangeUtc(shiftDays(localToday(), -6), null);
-  const perDay = await query(`
+  // Bookings and sign-ups per Nairobi calendar day, last 14 days, with empty days filled in.
+  const perDayRows = await query(`
     SELECT DATE(CONVERT_TZ(booked_at, '+00:00', ?)) AS day, COUNT(*) AS n FROM bookings
-    WHERE booked_at >= ? GROUP BY day ORDER BY day`, [tz, start]);
-  const num = (o) => Object.fromEntries(Object.entries(o).map(([k, x]) => [k, Number(x)]));
-  res.json({ totals: num(totals), almost_full: almostFull.map((r) => ({ ...r, booked: Number(r.booked) })), recent: recent.map((r) => isoFields(r)), per_day: perDay.map((r) => ({ day: r.day, n: Number(r.n) })) });
+    WHERE booked_at >= ? GROUP BY day ORDER BY day`, [tz, start14]);
+  const signupRows = await query(`
+    SELECT DATE(CONVERT_TZ(created_at, '+00:00', ?)) AS day, COUNT(*) AS n FROM users
+    WHERE created_at >= ? GROUP BY day ORDER BY day`, [tz, start14]);
+  const series = (rows) => {
+    const m = new Map(rows.map((r) => [String(r.day).slice(0, 10), Number(r.n)]));
+    return Array.from({ length: 14 }, (_, i) => { const day = shiftDays(today, i - 13); return { day, n: m.get(day) || 0 }; });
+  };
+  const num = (o) => Object.fromEntries(Object.entries(o).map(([k, x]) => [k, Number(x ?? 0)]));
+  const perDay = series(perDayRows);
+  res.json({
+    totals: num(totals),
+    week: { ...num(week), ...num(users) },
+    almost_full: almostFull.map((r) => ({ ...r, booked: Number(r.booked), waiting: Number(r.waiting) })),
+    recent: recent.map((r) => isoFields(r)),
+    per_day: perDay.slice(-7), // kept for older clients: the last 7 days
+    per_day_14: perDay,
+    signups_14: series(signupRows),
+  });
 }));
 
 /* ---------- Event picker for admin filters (id, title, date of every event, newest first) ---------- */

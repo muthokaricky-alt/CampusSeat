@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { FileText, FileSpreadsheet } from 'lucide-react';
+import { CalendarDays, FileText, FileSpreadsheet, Ticket } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useToast } from '../../context/ToastContext.jsx';
-import { Alert, Empty, Spinner } from '../../components/ui.jsx';
+import { Alert } from '../../components/ui.jsx';
+import { TableSkeleton } from '../../components/admin/DataTable.jsx';
 
 export default function Reports() {
   const toast = useToast();
@@ -27,16 +28,20 @@ export default function Reports() {
     : [['', 'Event date'], ['title', 'Title'], ['booked', 'Seats booked'], ['capacity', 'Capacity']];
   return (
     <div>
-      <div className="row spread page-head">
-        <div><h1>Reports</h1><p>Filter and sort, then download a PDF or CSV. Reports carry the CampusSeat name and the date.</p></div>
+      <div className="page-head admin-head">
+        <div><h1>Reports</h1><p>Choose a report, narrow it down, check the preview, then download. PDFs carry the CampusSeat name and the date.</p></div>
         <div className="row">
           <button className="btn" onClick={() => download('pdf')}><FileText size={18} aria-hidden />Download PDF</button>
           <button className="btn secondary" onClick={() => download('csv')}><FileSpreadsheet size={18} aria-hidden />Download CSV</button>
         </div>
       </div>
       <div className="toolbar">
-        <div className="field"><label htmlFor="rt"><span className="label">Report</span></label>
-          <select id="rt" value={type} onChange={(e) => { setType(e.target.value); setF({ ...f, sort: '' }); }}><option value="bookings">Bookings</option><option value="events">Events summary</option></select></div>
+        <div className="field"><span className="label" id="rt-l">Report</span>
+          <div className="chips" role="radiogroup" aria-labelledby="rt-l">
+            {[['bookings', 'Bookings', Ticket], ['events', 'Events summary', CalendarDays]].map(([v, l, Icon]) => (
+              <button key={v} type="button" role="radio" aria-checked={type === v} className={`chip ${type === v ? 'on' : ''}`} onClick={() => { setType(v); setF({ ...f, sort: '' }); }}><Icon size={15} aria-hidden />{l}</button>
+            ))}
+          </div></div>
         <div className="field"><label htmlFor="rf"><span className="label">{type === 'bookings' ? 'Booked from' : 'Events from'}</span></label><input id="rf" type="date" value={f.from} onChange={set('from')} /></div>
         <div className="field"><label htmlFor="rto"><span className="label">To</span></label><input id="rto" type="date" value={f.to} min={f.from || undefined} onChange={set('to')} /></div>
         {type === 'bookings' && <>
@@ -51,19 +56,21 @@ export default function Reports() {
           <select id="rd" value={f.dir} onChange={set('dir')}><option value="desc">Newest or largest first</option><option value="asc">Oldest or smallest first</option></select></div>
       </div>
       {error && <Alert>{error}</Alert>}
-      {!data && !error && <Spinner />}
       {data && (
-        <>
-          <p className="muted small">{[...data.totals, ...data.filters].join(' · ')}</p>
-          {data.rows.length === 0 ? <Empty title="No results for these filters" /> : (
-            <div className="table-wrap"><table>
-              <thead><tr>{data.columns.map((c) => <th key={c.key}>{c.label}</th>)}</tr></thead>
-              <tbody>{data.rows.slice(0, 200).map((r, i) => <tr key={i}>{data.columns.map((c) => <td key={c.key}>{String(r[c.key] ?? '')}</td>)}</tr>)}</tbody>
-            </table></div>
-          )}
-          {data.rows.length > 200 && <p className="muted small">Showing the first 200 rows. Downloads include all {data.rows.length}.</p>}
-        </>
+        <div className="report-summary" aria-live="polite">
+          {data.totals.map((t) => <span key={t} className="badge info">{t}</span>)}
+          {data.filters.map((t) => <span key={t} className="badge">{t}</span>)}
+        </div>
       )}
+      <div className="table-wrap"><table>
+        <thead><tr>{(data?.columns || [{ key: 'a', label: '\u00a0' }, { key: 'b', label: '' }, { key: 'c', label: '' }, { key: 'd', label: '' }]).map((c) => <th key={c.key}>{c.label}</th>)}</tr></thead>
+        {!data && !error && <TableSkeleton cols={4} rows={6} />}
+        {data && <tbody>
+          {data.rows.length === 0 && <tr><td colSpan={data.columns.length} className="table-empty"><strong>No results for these filters</strong><br /><span className="muted">Widen the dates or choose all events.</span></td></tr>}
+          {data.rows.slice(0, 200).map((r, i) => <tr key={i}>{data.columns.map((c) => <td key={c.key}>{String(r[c.key] ?? '')}</td>)}</tr>)}
+        </tbody>}
+      </table></div>
+      {data?.rows.length > 200 && <p className="muted small" style={{ marginTop: '0.6rem' }}>The preview shows the first 200 rows. Downloads include all {data.rows.length}.</p>}
     </div>
   );
 }

@@ -1,17 +1,22 @@
 import { useEffect, useState } from 'react';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { Pencil, Plus, Search, Trash2, Users } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useToast } from '../../context/ToastContext.jsx';
-import { Alert, ConfirmDialog, Empty, Field, Modal, Pager, Spinner } from '../../components/ui.jsx';
+import { Alert, ConfirmDialog, Field, Modal, useDebounced } from '../../components/ui.jsx';
+import { SortHeader, TableFooter, TableSkeleton, listState } from '../../components/admin/DataTable.jsx';
 import { fmtDate, fmtTime, today } from '../../lib/format.js';
 
 const blank = { title: '', description: '', venue: '', event_date: '', start_time: '', end_time: '', capacity: '', restrict: false, school_ids: [] };
 
 export default function AdminEvents() {
   const toast = useToast();
-  const [events, setEvents] = useState(null);
-  const [meta, setMeta] = useState(null);
-  const [page, setPage] = useState(1);
+  const [params, setParams] = useSearchParams();
+  const st = listState(params, { sort: 'date', dir: 'asc', limit: 50 });
+  const showAll = st.get('show') === 'all';
+  const [q, setQ] = useState(st.get('search'));
+  const search = useDebounced(q);
+  const [data, setData] = useState(null);
   const [schools, setSchools] = useState([]);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(null); // null | {id?, ...fields}
@@ -20,9 +25,28 @@ export default function AdminEvents() {
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(null);
 
-  const load = () => api.get(`/events?past=1&sort=date&dir=desc&limit=50&page=${page}`).then((r) => { setEvents(r.events); setMeta(r.meta); }).catch((e) => setError(e.message));
+  const update = (changes) => {
+    const next = new URLSearchParams(params);
+    Object.entries(changes).forEach(([k, v]) => (v ? next.set(k, String(v)) : next.delete(k)));
+    if (!('page' in changes)) next.delete('page');
+    setParams(next, { replace: true });
+  };
+  useEffect(() => { if (search !== st.get('search')) update({ search }); }, [search]); // eslint-disable-line react-hooks/exhaustive-deps
+  const load = () => {
+    const p = new URLSearchParams({ page: st.page, limit: st.limit, sort: st.sort, dir: st.dir });
+    if (showAll) p.set('past', '1');
+    if (st.get('search')) p.set('search', st.get('search'));
+    setData((d) => (d ? { ...d, loading: true } : d));
+    return api.get(`/events?${p}`).then((r) => { setData(r); setError(''); }).catch((e) => setError(e.message));
+  };
   useEffect(() => { api.get('/schools').then((r) => setSchools(r.schools)); }, []);
-  useEffect(() => { load(); }, [page]);
+  useEffect(() => { load(); }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The dashboard's "New event" button links here with ?new=1.
+  useEffect(() => { if (params.get('new') === '1') { open(null); update({ new: '' }); } }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const events = data?.events;
+  const meta = data?.meta;
+  const sortProps = { sort: st.sort, dir: st.dir, onSort: (sort, dir) => update({ sort, dir }) };
+  const status = (e) => (e.is_past ? ['Ended', ''] : e.seats_remaining <= 0 ? ['Full', 'bad'] : e.seats_remaining / e.capacity <= 0.2 ? ['Filling up', 'warn'] : ['Open', 'ok']);
 
   const open = (e) => {
     setErrors({}); setFormError('');
@@ -53,36 +77,63 @@ export default function AdminEvents() {
 
   return (
     <div>
-      <div className="row spread page-head">
-        <div><h1>Events</h1><p>Create, edit and delete events. Past events stay listed for reports.</p></div>
+      <div className="page-head admin-head">
+        <div><h1>Events</h1><p>Create and edit events, see how full they are, and jump to who booked.</p></div>
         <button className="btn" onClick={() => open(null)}><Plus size={18} aria-hidden />New event</button>
       </div>
-      {error && <Alert>{error}</Alert>}
-      {!events && !error && <Spinner />}
-      {events?.length === 0 && <Empty title="No events yet">Select New event to add the first one.</Empty>}
-      {events?.length > 0 && (
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Event</th><th>Date</th><th>Venue</th><th>Booked</th><th>Open to</th><th><span className="sr-only">Actions</span></th></tr></thead>
-            <tbody>
-              {events.map((e) => (
-                <tr key={e.event_id}>
-                  <td><strong>{e.title}</strong>{e.is_past && <> <span className="badge">Ended</span></>}</td>
-                  <td>{fmtDate(e.event_date, { day: 'numeric', month: 'short', year: 'numeric' })}<br /><span className="muted small">{fmtTime(e.start_time)} to {fmtTime(e.end_time)}</span></td>
-                  <td>{e.venue}</td>
-                  <td><span className={`badge ${e.seats_remaining <= 0 ? 'bad' : ''}`}>{e.booked}/{e.capacity}</span></td>
-                  <td>{e.restricted_to.length ? e.restricted_to.join(', ') : 'Everyone'}</td>
-                  <td className="actions">
-                    <button className="btn secondary sm" onClick={() => open(e)} aria-label={`Edit ${e.title}`}><Pencil size={15} aria-hidden />Edit</button>
-                    <button className="btn danger sm" onClick={() => setDeleting(e)} aria-label={`Delete ${e.title}`}><Trash2 size={15} aria-hidden />Delete</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <div className="toolbar">
+        <div className="field search"><label htmlFor="eq"><span className="label">Search events</span></label>
+          <div className="search-box"><Search size={18} aria-hidden /><input id="eq" type="search" placeholder="Title, venue or description" value={q} onChange={(e) => setQ(e.target.value)} /></div></div>
+        <div className="chips" role="radiogroup" aria-label="Which events">
+          <button type="button" role="radio" aria-checked={!showAll} className={`chip ${!showAll ? 'on' : ''}`} onClick={() => update({ show: '' })}>Upcoming</button>
+          <button type="button" role="radio" aria-checked={showAll} className={`chip ${showAll ? 'on' : ''}`} onClick={() => update({ show: 'all' })}>Include past events</button>
         </div>
-      )}
-      {meta && meta.total > meta.limit && <Pager page={meta.page} total={meta.total} limit={meta.limit} onPage={setPage} />}
+      </div>
+      {error && <Alert>{error} <button className="linklike" onClick={load}>Try again</button></Alert>}
+      <div className={`table-wrap ${data?.loading ? 'is-loading' : ''}`}>
+        <table>
+          <thead><tr>
+            <SortHeader label="Event" sortKey="title" {...sortProps} />
+            <SortHeader label="Date" sortKey="date" {...sortProps} />
+            <th>Status</th>
+            <SortHeader label="Seats" sortKey="seats" {...sortProps} />
+            <th>Open to</th>
+            <th><span className="sr-only">Actions</span></th>
+          </tr></thead>
+          {!events && !error && <TableSkeleton cols={6} />}
+          {events && (
+            <tbody>
+              {events.length === 0 && (
+                <tr><td colSpan={6} className="table-empty">
+                  <strong>{st.get('search') ? 'No events match' : showAll ? 'No events yet' : 'No upcoming events'}</strong><br />
+                  {st.get('search') ? <span className="muted">Try another word.</span> : <button className="btn sm" style={{ marginTop: '0.6rem' }} onClick={() => open(null)}><Plus size={15} aria-hidden />Create an event</button>}
+                </td></tr>
+              )}
+              {events.map((e) => {
+                const [label, tone] = status(e);
+                return (
+                  <tr key={e.event_id} className={e.is_past ? 'row-dim' : ''}>
+                    <td><strong>{e.title}</strong><br /><span className="muted small">{e.venue}</span></td>
+                    <td className="nowrap">{fmtDate(e.event_date, { day: 'numeric', month: 'short', year: 'numeric' })}<br /><span className="muted small">{fmtTime(e.start_time)} to {fmtTime(e.end_time)}</span></td>
+                    <td><span className={`badge ${tone}`}>{label}</span>{e.waitlist_count > 0 && <><br /><span className="small muted">{e.waitlist_count} waiting</span></>}</td>
+                    <td className="seats-cell">
+                      <div className="seats-mini" role="img" aria-label={`${e.booked} of ${e.capacity} seats booked`}><i style={{ transform: `scaleX(${Math.min(1, e.booked / e.capacity)})` }} /></div>
+                      <span className="small">{e.booked}/{e.capacity}</span>
+                    </td>
+                    <td className="small">{e.restricted_to.length ? e.restricted_to.join(', ') : 'Everyone'}</td>
+                    <td className="actions">
+                      <Link className="btn ghost sm" to={`/admin/bookings?event_id=${e.event_id}`} aria-label={`Bookings for ${e.title}`}><Users size={15} aria-hidden />Bookings</Link>
+                      <button className="btn ghost sm" onClick={() => open(e)} aria-label={`Edit ${e.title}`}><Pencil size={15} aria-hidden />Edit</button>
+                      <button className="btn ghost sm danger-text" onClick={() => setDeleting(e)} aria-label={`Delete ${e.title}`}><Trash2 size={15} aria-hidden />Delete</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          )}
+        </table>
+      </div>
+      <TableFooter meta={meta} noun="events" onPage={(page) => update({ page })} onLimit={(limit) => update({ limit })} />
 
       <Modal open={!!editing} wide title={editing?.id ? 'Edit event' : 'New event'} onClose={() => setEditing(null)}
         footer={<><button type="button" className="btn secondary" onClick={() => setEditing(null)}>Cancel</button><button className="btn" form="event-form" disabled={busy}>{busy ? 'Saving…' : 'Save event'}</button></>}>

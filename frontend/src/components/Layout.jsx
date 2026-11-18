@@ -65,16 +65,22 @@ export function Shell() {
   );
 }
 
-const links = [
-  ['/admin', 'Dashboard', LayoutDashboard, true], ['/admin/events', 'Events', CalendarDays],
-  ['/admin/bookings', 'Bookings', Ticket], ['/admin/users', 'Users', Users],
-  ['/admin/reports', 'Reports', BarChart3], ['/admin/audit', 'Audit logs', ScrollText],
+// Grouped so the six destinations read as three small sets (easier to scan than one list).
+const groups = [
+  ['Overview', [['/admin', 'Dashboard', LayoutDashboard, true]]],
+  ['Manage', [['/admin/events', 'Events', CalendarDays], ['/admin/bookings', 'Bookings', Ticket], ['/admin/users', 'Users', Users]]],
+  ['Records', [['/admin/reports', 'Reports', BarChart3], ['/admin/audit', 'Audit logs', ScrollText]]],
 ];
 export function AdminLayout() {
   return (
     <div className="container admin">
       <nav className="side" aria-label="Admin">
-        {links.map(([to, label, Icon, end]) => <NavLink key={to} to={to} end={end}><Icon size={18} aria-hidden />{label}</NavLink>)}
+        {groups.map(([title, items]) => (
+          <div key={title} className="side-group">
+            <span className="side-title">{title}</span>
+            {items.map(([to, label, Icon, end]) => <NavLink key={to} to={to} end={end}><Icon size={18} aria-hidden />{label}</NavLink>)}
+          </div>
+        ))}
       </nav>
       <section><Suspense fallback={<PageSkeleton bare />}><Outlet /></Suspense></section>
     </div>

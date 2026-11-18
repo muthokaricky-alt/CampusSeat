@@ -54,7 +54,22 @@ Performance 92, Accessibility 100, Best Practices 100, SEO 100. First Contentful
 Largest Contentful Paint about 2.1 s, Cumulative Layout Shift 0 to 0.056 (font swap in the header on phones).
 Before Phase 3: Performance 78, Accessibility 100, Best Practices 100, SEO 91.
 
+## Admin panel (redesign)
+
+| Principle | Where | How |
+| --- | --- | --- |
+| Frequency of use | `pages/admin/Dashboard.jsx` | "New event" and "Reports" are the first two buttons; dashboard rows link straight to that event's bookings. |
+| Miller's law | `components/Layout.jsx` sidebar | Six destinations grouped as Overview / Manage / Records. |
+| Hick's law | Events (Upcoming / Include past), Reports (two report chips) | Two-way choices as chips instead of dropdowns. |
+| Doherty threshold | `components/admin/DataTable.jsx` | Skeleton rows on first load; on later sorts and pages the old rows stay, dimmed, until the new page arrives. |
+| Error prevention | `pages/admin/AdminUsers.jsx` | Role changes ask for confirmation (they grant or remove admin access and log the person out). |
+| Not colour alone | `components/admin/StatCard.jsx` | Week-on-week changes use an arrow and a screen-reader word as well as green or red. |
+
+Sortable headers expose `aria-sort`; list state (filters, sort, page, rows) lives in the URL so views can be bookmarked.
+Scrolling table boxes are `position: relative`, so screen-reader-only labels inside them cannot widen the page on phones.
+
 ## Third-party code
 
 - React Bits ClickSpark, copied as source into `src/components/reactbits/` with its licence (MIT + Commons Clause: free to use inside an application).
+- 21st.dev: "Stat Card" by aadixc0de (from chatcn, chatcn.dev) and "Data Table" by ephraimduncan, retrieved with the 21st plugin and rebuilt on CampusSeat's CSS tokens (no Tailwind, Radix or TanStack Table added): `src/components/admin/StatCard.jsx`, `src/components/admin/DataTable.jsx`.
 - GSAP 3.15.1, Lenis 1.3.27, Vanta 0.5.24 with three.js 0.134.0 (the last three.js line Vanta supports), pinned exactly.
