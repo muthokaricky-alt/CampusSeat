@@ -636,6 +636,17 @@ ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted ev
   } else console.log('SKIP  static asset checks (frontend not built)');
 }
 
+// --- admin dashboard numbers
+{
+  const s = (await call('GET', '/api/admin/stats', null, admin.token)).data;
+  const isNum = (x) => typeof x === 'number' && Number.isFinite(x);
+  ok(s.per_day_14?.length === 14 && s.signups_14?.length === 14 && s.per_day.length === 7, 'dashboard has 14 days of bookings and sign-ups (and the 7-day series)');
+  ok(s.per_day_14.at(-1).day === new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' }), 'the last day in the series is today in Nairobi');
+  ok(['bookings', 'bookings_prev', 'users', 'users_prev'].every((k) => isNum(s.week[k])) && s.week.bookings >= 1 && s.week.users >= 1, 'this week vs last week counts are present (today has bookings and sign-ups)');
+  ok(s.per_day_14.slice(-7).reduce((n, d) => n + d.n, 0) === s.week.bookings, 'the daily series adds up to the weekly booking count');
+  ok(['waiting', 'upcoming_seats', 'upcoming_booked'].every((k) => isNum(s.totals[k])) && s.totals.upcoming_booked <= s.totals.upcoming_seats, 'seat fill and waitlist totals are consistent');
+}
+
 // --- operations: health, readiness, request ids, config validation
 const h = await call('GET', '/api/health');
 ok(h.status === 200 && h.data.db?.ok === true && typeof h.data.db.latency_ms === 'number', 'health reports database ok with latency');

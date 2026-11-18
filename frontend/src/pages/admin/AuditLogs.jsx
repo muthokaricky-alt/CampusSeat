@@ -3,7 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { Download, Filter, X } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useToast } from '../../context/ToastContext.jsx';
-import { Alert, Empty, Modal, Pager, Spinner, useDebounced } from '../../components/ui.jsx';
+import { Alert, Modal, useDebounced } from '../../components/ui.jsx';
+import { SortHeader, TableFooter, TableSkeleton } from '../../components/admin/DataTable.jsx';
 import { fmtDateTime, today } from '../../lib/format.js';
 
 // Filters live in the address bar, so a filtered view can be bookmarked or shared with another admin.
@@ -44,6 +45,9 @@ export default function AuditLogs() {
   const [params, setParams] = useSearchParams();
   const f = Object.fromEntries(KEYS.map((k) => [k, params.get(k) || '']));
   const page = Number(params.get('page')) || 1;
+  const limit = Number(params.get('limit')) || 25;
+  const sort = params.get('sort') || 'time';
+  const dir = params.get('dir') || 'desc';
   const [text, setText] = useState({ person: f.person, search: f.search, entity_id: f.entity_id });
   const debounced = useDebounced(text);
   const [data, setData] = useState(null);
@@ -69,11 +73,12 @@ export default function AuditLogs() {
   }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const p = new URLSearchParams(query); p.set('page', page); p.set('limit', 25);
+    const p = new URLSearchParams(query); p.set('page', page); p.set('limit', limit); p.set('sort', sort); p.set('dir', dir);
     let live = true;
+    setData((d) => (d ? { ...d, loading: true } : d));
     api.get(`/admin/audit-logs?${p}`).then((r) => { if (live) { setData(r); setError(''); } }).catch((e) => live && setError(e.message));
     return () => { live = false; };
-  }, [query, page]);
+  }, [query, page, limit, sort, dir]);
 
   const actions = f.action ? f.action.split(',') : [];
   const filtered = KEYS.some((k) => f[k]);
@@ -109,25 +114,28 @@ export default function AuditLogs() {
       </div>
 
       {error && <Alert>{error}</Alert>}
-      {!data && !error && <Spinner />}
-      {data?.logs.length === 0 && <Empty title="No log entries match">{filtered ? 'Try removing a filter.' : 'Nothing has been recorded yet.'}</Empty>}
-      {data?.logs.length > 0 && (
-        <>
-          <p className="small muted" aria-live="polite">{data.meta.total} entr{data.meta.total === 1 ? 'y' : 'ies'}</p>
-          <div className="table-wrap"><table>
-            <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Details</th><th><span className="sr-only">Open</span></th></tr></thead>
-            <tbody>{data.logs.map((l) => (
-              <tr key={l.log_id}>
-                <td style={{ whiteSpace: 'nowrap' }}>{fmtDateTime(l.logged_at)}</td>
-                <td>{l.full_name || <span className="muted">{l.actor_email ? 'Deleted account' : 'Not signed in'}</span>}{l.actor_email && <><br /><span className="muted small">{l.actor_email}</span></>}</td>
-                <td><span className={`badge ${badgeFor(l.action)}`}>{l.action}</span>{l.entity_type && <><br /><span className="muted small">{l.entity_type} #{l.entity_id}</span></>}</td>
-                <td>{l.details}{l.has_changes && <span className="badge" style={{ marginLeft: '0.4rem' }}>changes</span>}</td>
-                <td><button className="btn ghost sm" onClick={() => setOpen(l)} aria-label={`Details of ${l.action} at ${fmtDateTime(l.logged_at)}`}>Details</button></td>
-              </tr>))}</tbody>
-          </table></div>
-          <Pager page={data.meta.page} total={data.meta.total} limit={data.meta.limit} onPage={(p) => update({ page: String(p) })} />
-        </>
-      )}
+      <p className="small muted" aria-live="polite">{data ? `${data.meta.total} entr${data.meta.total === 1 ? 'y' : 'ies'}` : '\u00a0'}</p>
+      <div className={`table-wrap ${data?.loading ? 'is-loading' : ''}`}><table>
+        <thead><tr>
+          <SortHeader label="When" sortKey="time" defaultDir="desc" sort={sort} dir={dir} onSort={(k, d) => update({ sort: k, dir: d })} />
+          <th>Who</th>
+          <SortHeader label="Action" sortKey="action" sort={sort} dir={dir} onSort={(k, d) => update({ sort: k, dir: d })} />
+          <th>Details</th><th><span className="sr-only">Open</span></th>
+        </tr></thead>
+        {!data && !error && <TableSkeleton cols={5} rows={8} />}
+        {data && <tbody>
+          {data.logs.length === 0 && <tr><td colSpan={5} className="table-empty"><strong>No log entries match</strong><br /><span className="muted">{filtered ? 'Try removing a filter.' : 'Nothing has been recorded yet.'}</span></td></tr>}
+          {data.logs.map((l) => (
+            <tr key={l.log_id}>
+              <td className="nowrap">{fmtDateTime(l.logged_at)}</td>
+              <td>{l.full_name || <span className="muted">{l.actor_email ? 'Deleted account' : 'Not signed in'}</span>}{l.actor_email && <><br /><span className="muted small">{l.actor_email}</span></>}</td>
+              <td><span className={`badge ${badgeFor(l.action)}`}>{l.action}</span>{l.entity_type && <><br /><span className="muted small">{l.entity_type} #{l.entity_id}</span></>}</td>
+              <td>{l.details}{l.has_changes && <span className="badge" style={{ marginLeft: '0.4rem' }}>changes</span>}</td>
+              <td><button className="btn ghost sm" onClick={() => setOpen(l)} aria-label={`Details of ${l.action} at ${fmtDateTime(l.logged_at)}`}>Details</button></td>
+            </tr>))}
+        </tbody>}
+      </table></div>
+      <TableFooter meta={data?.meta} noun="entries" sizes={[25, 50, 100]} onPage={(p) => update({ page: String(p) })} onLimit={(l) => update({ limit: String(l) })} />
 
       <Modal open={!!open} wide title={open ? `${open.action}` : ''} onClose={() => setOpen(null)}>
         {open && (
