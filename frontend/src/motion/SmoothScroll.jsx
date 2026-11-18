@@ -25,7 +25,8 @@ export default function SmoothScroll() {
     let raf = 0;
     import('lenis').then(({ default: Lenis }) => {
       if (cancelled) return;
-      lenis = new Lenis({ duration: 0.9, smoothWheel: true, anchors: true });
+      // anchors off: card links like /events/1#book point at other pages; in-page jumps stay native and instant.
+      lenis = new Lenis({ duration: 0.9, smoothWheel: true });
       const loop = (t) => { lenis?.raf(t); raf = requestAnimationFrame(loop); };
       raf = requestAnimationFrame(loop);
     }).catch(() => { /* native scrolling is fine */ });

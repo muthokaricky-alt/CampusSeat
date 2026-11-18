@@ -37,6 +37,7 @@ Web system for reserving seats at university events. Students and staff browse e
 | Security | Hashed passwords, prepared statements, login rate limits and account lockout, role checks on every admin route, strict security headers (CSP), secrets never logged |
 | Validation and error messages | Server rules in [`utils/validate.js`](backend/src/utils/validate.js); field-level messages in every form |
 | Help facilities | Help page in the app |
+| Design and motion | One-tap booking with an animated confirmation, quick filters, skeleton loading, restrained GSAP/Lenis motion and a desktop-only Vanta hero; reduced motion respected, WCAG AA, strict CSP. Rationale and where each UX principle is applied: [`docs/UX_NOTES.md`](docs/UX_NOTES.md) |
 | Registration card | PDF with QR code, plus on-screen card |
 
 ## API

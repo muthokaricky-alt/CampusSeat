@@ -473,3 +473,7 @@ html { scroll-padding-top: 80px; }
 .menu-list button:disabled { opacity: 0.5; cursor: not-allowed; }
 .stack.past .reg-card { opacity: 0.8; }
 .hero-stats { min-height: 1.9rem; }
+.action-list { display: grid; gap: 0.6rem; }
+.action-list .btn { justify-content: flex-start; }
+/* Dark mode: the danger colour is light, so its button text must be dark (white would be about 2:1). */
+:root[data-theme='dark'] .btn.danger { color: #2a0a0d; }
