@@ -98,9 +98,12 @@ export default function Events() {
             <a className="btn lg" href="#events">Browse events</a>
             {user ? <Link className="btn ghost lg" to="/my-bookings">My bookings</Link> : <Link className="btn ghost lg" to="/register">Create an account</Link>}
           </div>
-          {meta && !filtered && (
-            <p className="hero-stats" aria-live="polite"><strong>{meta.total}</strong> upcoming {meta.total === 1 ? 'event' : 'events'}{openSeats > 0 && <> · <strong>{openSeats}</strong> open seats{meta.total > events.length ? ' and more' : ''}</>}</p>
-          )}
+          {/* The line is always there (space reserved), so the page does not shift when the numbers arrive. */}
+          <p className="hero-stats" aria-live="polite">
+            {meta && events && !filtered
+              ? <><strong>{meta.total}</strong> upcoming {meta.total === 1 ? 'event' : 'events'}{openSeats > 0 && <> · <strong>{openSeats}</strong> open seats{meta.total > events.length ? ' and more' : ''}</>}</>
+              : ' '}
+          </p>
         </div>
       </section>
 

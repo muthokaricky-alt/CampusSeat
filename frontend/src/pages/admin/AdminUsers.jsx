@@ -64,10 +64,16 @@ export default function AdminUsers() {
                 <option value="user">User</option><option value="admin">Admin</option></select></td>
               <td>{u.bookings}</td><td>{fmtDate(u.created_at, { day: 'numeric', month: 'short', year: 'numeric' })}</td>
               <td className="actions">
+                {/* One menu instead of four buttons per row (fewer choices on screen); the urgent one stays visible. */}
                 {u.locked_until && <button className="btn secondary sm" onClick={() => unlock(u)}><LockOpen size={15} aria-hidden />Unlock</button>}
-                <button className="btn secondary sm" onClick={() => sendLink(u)}><Mail size={15} aria-hidden />Email reset link</button>
-                <button className="btn secondary sm" onClick={() => { setTempPw(''); setResetFor(u); }}><KeyRound size={15} aria-hidden />Temporary password</button>
-                <button className="btn danger sm" disabled={u.user_id === me.user_id} onClick={() => setDeleting(u)} aria-label={`Delete ${u.full_name}`}><Trash2 size={15} aria-hidden />Delete</button>
+                <details className="menu" onToggle={(e) => { if (e.currentTarget.open) e.currentTarget.querySelector('button')?.focus(); }}>
+                  <summary className="btn ghost sm" aria-label={`Actions for ${u.full_name}`}>Actions</summary>
+                  <div className="menu-list" role="group" aria-label={`Actions for ${u.full_name}`}>
+                    <button type="button" onClick={(e) => { e.currentTarget.closest('details').open = false; sendLink(u); }}><Mail size={15} aria-hidden />Email a reset link</button>
+                    <button type="button" onClick={(e) => { e.currentTarget.closest('details').open = false; setTempPw(''); setResetFor(u); }}><KeyRound size={15} aria-hidden />Set a temporary password</button>
+                    <button type="button" className="danger" disabled={u.user_id === me.user_id} onClick={(e) => { e.currentTarget.closest('details').open = false; setDeleting(u); }}><Trash2 size={15} aria-hidden />Delete user</button>
+                  </div>
+                </details>
               </td>
             </tr>))}</tbody>
         </table></div>

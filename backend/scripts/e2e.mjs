@@ -603,6 +603,24 @@ ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted ev
   ok(await ipFor('198.51.100.7, 203.0.113.9, 10.0.0.5') === '203.0.113.9', 'a forged X-Forwarded-For entry cannot replace the real visitor IP');
 }
 
+// --- delivery: compression and caching
+{
+  const r = await fetch(`${BASE}/api/events?limit=50`, { headers: { 'Accept-Encoding': 'gzip' } });
+  ok(r.headers.get('content-encoding') === 'gzip', 'API responses are gzip-compressed');
+  const page = await fetch(`${BASE}/`);
+  if (page.status === 200 && (page.headers.get('content-type') || '').includes('html')) { // only when the frontend is built
+    const html = await page.text();
+    const asset = html.match(/\/assets\/[\w.-]+\.js/)?.[0];
+    const a = asset && await fetch(BASE + asset, { headers: { 'Accept-Encoding': 'gzip' } });
+    ok(page.headers.get('cache-control') === 'no-cache' && a?.headers.get('cache-control')?.includes('immutable') && a.headers.get('content-encoding') === 'gzip',
+      'index.html is revalidated; hashed assets are cached for a year and compressed');
+    const missing = await fetch(`${BASE}/assets/nope-123.js`);
+    ok(missing.status === 404 && !(await missing.text()).includes('id="root"'), 'a missing asset is a 404, not the app page');
+    const robots = await fetch(`${BASE}/robots.txt`);
+    ok(robots.status === 200 && (await robots.text()).startsWith('User-agent'), 'robots.txt is served');
+  } else console.log('SKIP  static asset checks (frontend not built)');
+}
+
 // --- operations: health, readiness, request ids, config validation
 const h = await call('GET', '/api/health');
 ok(h.status === 200 && h.data.db?.ok === true && typeof h.data.db.latency_ms === 'number', 'health reports database ok with latency');
