@@ -12,15 +12,6 @@ export const config = {
   clientOrigin: process.env.CLIENT_ORIGIN || 'http://localhost:5173',
   jwtSecret: required('JWT_SECRET'),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '8h',
-  db: {
-    host: process.env.DB_HOST || 'localhost',
-    port: Number(process.env.DB_PORT || 3306),
-    user: required('DB_USER', 'root'),
-    password: process.env.DB_PASSWORD || '',
-    database: process.env.DB_NAME || 'campusseat_db',
-    // Hosted MySQL (Aiven, TiDB, ...) usually requires an encrypted connection: set DB_SSL=true.
-    ...(process.env.DB_SSL === 'true' ? { ssl: { rejectUnauthorized: false } } : {}),
-  },
 };
 
 if (config.isProd && config.jwtSecret.length < 32) {

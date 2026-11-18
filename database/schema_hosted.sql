@@ -1,3 +1,5 @@
+-- DEPRECATED: kept for reference only. The schema is now managed by numbered migrations in
+-- backend/migrations (run: cd backend && npm run migrate). This file is the pre-migration baseline.
 -- Same tables as schema.sql, without CREATE DATABASE / USE.
 -- Use this on a hosted MySQL where the database already exists (e.g. Aiven's defaultdb).
 
