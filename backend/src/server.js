@@ -4,6 +4,7 @@ import { pool } from './db.js';
 import { dbTarget } from './db-config.js';
 import { logger } from './logger.js';
 import { checkMigrations, markShuttingDown } from './health.js';
+import { pruneSessions } from './sessions.js';
 
 try {
   await pool.query('SELECT 1');
@@ -15,6 +16,11 @@ const mig = await checkMigrations();
 if (!mig.ok) logger.warn({ migrations: mig }, 'Database schema is not up to date: run "npm run migrate". /api/ready will report 503.');
 
 const server = createApp().listen(config.port, () => logger.info(`CampusSeat API (${config.env}) listening on http://localhost:${config.port}`));
+
+// Housekeeping: remove sessions that ended more than a day ago.
+const prune = () => pruneSessions().catch((err) => logger.warn({ err }, 'session prune failed'));
+if (mig.ok) prune();
+setInterval(prune, 60 * 60_000).unref();
 
 // Graceful shutdown: Render sends SIGTERM on deploy. Stop taking traffic, finish in-flight requests, close the pool.
 let stopping = false;

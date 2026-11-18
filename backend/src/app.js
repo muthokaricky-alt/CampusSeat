@@ -9,6 +9,7 @@ import { config } from './config.js';
 import { AppError } from './utils/errors.js';
 import { httpLogger } from './logger.js';
 import { health, ready } from './health.js';
+import { originCheck } from './middleware/auth.js';
 import authRoutes from './routes/auth.js';
 import schoolRoutes from './routes/schools.js';
 import eventRoutes from './routes/events.js';
@@ -23,6 +24,7 @@ export function createApp() {
   app.use(helmet());
   if (!config.isProd) app.use(cors({ origin: config.clientOrigin }));
   app.use(express.json({ limit: '100kb' }));
+  app.use('/api', originCheck); // CSRF layer 1 (layer 2, the token, is checked with the session)
   app.use('/api', rateLimit({ windowMs: 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false }));
 
   app.get('/api/health', health);
