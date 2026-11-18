@@ -1,6 +1,7 @@
 // Adds starter data: schools, an admin, a demo student and sample events. Safe to run more than once.
 import bcrypt from 'bcryptjs';
 import { pool } from '../src/db.js';
+import { localToday, zonedToSqlUtc } from '../src/utils/time.js';
 
 const adminPw = process.env.SEED_ADMIN_PASSWORD || 'Admin@12345';
 const demoPw = process.env.SEED_DEMO_PASSWORD || 'Student@12345';
@@ -25,7 +26,8 @@ await upsertUser('Demo Student', 'DEMO-0001', 'student@campusseat.local', demoPw
 
 const [[{ n }]] = await pool.execute('SELECT COUNT(*) AS n FROM events');
 if (n === 0) {
-  const day = (plus) => { const d = new Date(); d.setDate(d.getDate() + plus); return d.toLocaleDateString('en-CA'); };
+  // Event dates and times are Nairobi wall-clock; starts_at/ends_at hold the UTC instants.
+  const day = (plus) => { const d = new Date(`${localToday()}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + plus); return d.toISOString().slice(0, 10); };
   const events = [
     ['Career Fair 2026', 'Meet employers hiring graduates and interns. Bring copies of your CV.', 'Main Hall', 5, '09:00', '16:00', 100, []],
     ['AI Research Symposium', 'Student research talks, a panel discussion and a poster session on applied AI.', 'Auditorium B', 8, '14:00', '17:00', 60, [id(schools[0])]],
@@ -36,8 +38,8 @@ if (n === 0) {
   ];
   for (const [t, d, v, plus, st, en, cap, ids] of events) {
     const [r] = await pool.execute(
-      'INSERT INTO events (title, description, venue, event_date, start_time, end_time, capacity, created_by) VALUES (?,?,?,?,?,?,?,?)',
-      [t, d, v, day(plus), st, en, cap, adminId]);
+      'INSERT INTO events (title, description, venue, event_date, start_time, end_time, starts_at, ends_at, capacity, created_by) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [t, d, v, day(plus), st, en, zonedToSqlUtc(day(plus), st), zonedToSqlUtc(day(plus), en), cap, adminId]);
     for (const sid of ids) await pool.execute('INSERT INTO event_schools (event_id, school_id) VALUES (?, ?)', [r.insertId, sid]);
   }
 }

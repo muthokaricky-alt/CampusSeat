@@ -2,14 +2,13 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../../lib/api.js';
 import { Alert, Spinner } from '../../components/ui.jsx';
-import { fmtDate, fmtDateTime } from '../../lib/format.js';
+import { addDays, fmtDate, fmtDateTime, today } from '../../lib/format.js';
 
 const lastSevenDays = (perDay) => {
   const map = new Map(perDay.map((r) => [String(r.day).slice(0, 10), r.n]));
   return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(); d.setDate(d.getDate() - (6 - i));
-    const key = d.toLocaleDateString('en-CA');
-    return { key, label: d.toLocaleDateString('en-GB', { weekday: 'short' }), n: map.get(key) || 0 };
+    const key = addDays(today(), i - 6); // Nairobi days, matching the server's per_day buckets
+    return { key, label: new Date(`${key}T00:00:00Z`).toLocaleDateString('en-GB', { weekday: 'short', timeZone: 'UTC' }), n: map.get(key) || 0 };
   });
 };
 

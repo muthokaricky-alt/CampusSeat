@@ -43,5 +43,14 @@ export const fmtDateTime = (dt) => {
   });
 };
 
+// Event dates are Nairobi calendar dates, so "today" is the Nairobi date wherever the browser is.
+export const APP_TZ = 'Africa/Nairobi';
 export const today = () =>
-  new Date().toLocaleDateString('en-CA');
+  new Date().toLocaleDateString('en-CA', { timeZone: APP_TZ });
+
+/** Shift a "YYYY-MM-DD" date by n days (calendar arithmetic, no time zone involved). */
+export const addDays = (ymd, n) => {
+  const d = new Date(`${ymd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};

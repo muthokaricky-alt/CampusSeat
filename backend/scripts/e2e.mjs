@@ -100,6 +100,46 @@ const del = await call('DELETE', `/api/events/${ev.event_id}`, null, admin.token
 ok(del.status === 200 && del.data.removed_bookings === 4, 'admin deletes event (bookings removed)');
 await call('DELETE', `/api/events/${evLaw.event_id}`, null, admin.token);
 ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted event is gone (404)');
+// --- time zones: the database stores UTC, people work in Nairobi time (UTC+3)
+{
+  const nbo = (d = new Date()) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    .formatToParts(d).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
+  const n = nbo();
+  const todayNbo = `${n.year}-${n.month}-${n.day}`;
+  const hm = (d) => { const p = nbo(d); return `${p.hour}:${p.minute}`; };
+  const addDay = (ymd, k) => { const d = new Date(`${ymd}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + k); return d.toISOString().slice(0, 10); };
+
+  ok(ev.starts_at === `${future}T07:00:00Z` && ev.ends_at === `${future}T09:00:00Z`, '10:00-12:00 Nairobi is stored as 07:00-09:00 UTC', `${ev.starts_at} ${ev.ends_at}`);
+  const tomorrow = addDay(todayNbo, 1);
+  const early = (await call('POST', '/api/events', mk({ title: `Early ${stamp}`, event_date: tomorrow, start_time: '01:00', end_time: '02:00' }), admin.token)).data.event;
+  ok(early?.starts_at === `${todayNbo}T22:00:00Z` && early.event_date === tomorrow && early.start_time.startsWith('01:00'),
+    'event at 01:00 Nairobi falls on the previous UTC day but keeps its Nairobi date and time', JSON.stringify(early));
+  await call('DELETE', `/api/events/${early.event_id}`, null, admin.token);
+
+  const minsNow = Number(n.hour) * 60 + Number(n.minute);
+  if (minsNow >= 35 && minsNow <= 23 * 60 + 54) {
+    // An event happening right now in Nairobi: bookable until its end, then "past".
+    const startT = hm(new Date(Date.now() - 30 * 60e3)), endSoon = hm(new Date(Date.now() + 4 * 60e3)), endGone = hm(new Date(Date.now() - 60e3));
+    const now1 = (await call('POST', '/api/events', mk({ title: `Now ${stamp}`, event_date: todayNbo, start_time: startT, end_time: endSoon }), admin.token)).data.event;
+    ok(now1 && now1.is_past === false, 'event ending in 4 minutes (Nairobi) is not past', JSON.stringify(now1));
+    const ub = await book(u2, now1.event_id);
+    ok(ub.status === 201, 'event later today in Nairobi can be booked', JSON.stringify(ub.data));
+    const mineNow = (await call('GET', '/api/bookings/mine', null, u2.token)).data.bookings.find((b) => b.event_id === now1.event_id);
+    ok(/Z$/.test(mineNow.booked_at) && Math.abs(new Date(mineNow.booked_at) - Date.now()) < 120e3, 'booked_at is returned as ISO UTC and matches the real time', mineNow.booked_at);
+    const today1 = (await call('GET', `/api/admin/audit-logs?action=BOOK_SEAT&from=${todayNbo}&to=${todayNbo}&search=${encodeURIComponent('Now ' + stamp)}`, null, admin.token)).data;
+    ok(today1.total === 1, "audit date filter uses Nairobi days (today's booking is found)");
+    await call('PUT', `/api/events/${now1.event_id}`, mk({ title: `Now ${stamp}`, event_date: todayNbo, start_time: startT, end_time: endGone }), admin.token);
+    const gone = (await call('GET', `/api/events/${now1.event_id}`)).data.event;
+    ok(gone.is_past === true, 'event that ended 1 minute ago (Nairobi) is past');
+    ok((await book(u1, now1.event_id)).data.error?.code === 'EVENT_PAST', 'booking an event that just ended is refused');
+    ok(!(await call('GET', `/api/events?search=${encodeURIComponent('Now ' + stamp)}`)).data.events.length, 'ended event is hidden from the public list');
+    ok((await call('POST', '/api/events', mk({ title: `Gone ${stamp}`, event_date: todayNbo, start_time: startT, end_time: endGone }), admin.token)).data.error?.field === 'end_time', 'creating an event whose end time already passed today is refused');
+    await call('DELETE', `/api/events/${now1.event_id}`, null, admin.token);
+  } else {
+    console.log('SKIP  "happening now" time-zone checks (too close to midnight in Nairobi)');
+  }
+}
+
 // --- operations: health, readiness, request ids, config validation
 const h = await call('GET', '/api/health');
 ok(h.status === 200 && h.data.db?.ok === true && typeof h.data.db.latency_ms === 'number', 'health reports database ok with latency');

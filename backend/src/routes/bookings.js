@@ -5,6 +5,7 @@ import * as v from '../utils/validate.js';
 import { audit } from '../utils/audit.js';
 import { requireAuth, requireAdmin } from '../middleware/auth.js';
 import { buildCard } from '../utils/pdf.js';
+import { isoFields, localToday } from '../utils/time.js';
 
 const router = Router();
 const norm = (s) => String(s ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
@@ -31,7 +32,7 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
     const booking = await withTransaction(async (conn) => {
       const [[event]] = await conn.execute('SELECT * FROM events WHERE event_id = ? FOR UPDATE', [eventId]);
       if (!event) throw new AppError(404, 'NOT_FOUND', 'Event not found.');
-      const [[past]] = await conn.execute('SELECT TIMESTAMP(?, ?) < NOW() AS p', [event.event_date, event.end_time]);
+      const [[past]] = await conn.execute('SELECT ? < UTC_TIMESTAMP() AS p', [event.ends_at]);
       if (Number(past.p)) throw new AppError(409, 'EVENT_PAST', 'This event has already taken place.');
 
       const [dup] = await conn.execute('SELECT booking_id FROM bookings WHERE user_id = ? AND event_id = ?', [me.user_id, eventId]);
@@ -47,7 +48,7 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
 
       const tmp = `TMP${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`.slice(0, 20);
       const [ins] = await conn.execute('INSERT INTO bookings (booking_ref, user_id, event_id) VALUES (?, ?, ?)', [tmp, me.user_id, eventId]);
-      const ref = `CS-${new Date().getFullYear()}-${String(ins.insertId).padStart(5, '0')}`;
+      const ref = `CS-${localToday().slice(0, 4)}-${String(ins.insertId).padStart(5, '0')}`;
       await conn.execute('UPDATE bookings SET booking_ref = ? WHERE booking_id = ?', [ref, ins.insertId]);
       await audit(me.user_id, 'BOOK_SEAT', `Event #${eventId} "${event.title}", ref ${ref}`, conn);
       return { booking_id: ins.insertId, booking_ref: ref, event_id: eventId, seats_remaining: event.capacity - n - 1 };
@@ -61,7 +62,7 @@ router.post('/', requireAuth, asyncHandler(async (req, res) => {
 
 const BOOKING_SELECT = `
   SELECT b.booking_id, b.booking_ref, b.booked_at, b.event_id,
-         e.title, e.venue, e.event_date, e.start_time, e.end_time,
+         e.title, e.venue, e.event_date, e.start_time, e.end_time, e.starts_at, e.ends_at,
          u.user_id, u.full_name, u.student_number, u.email, s.school_name
   FROM bookings b
   JOIN events e ON e.event_id = b.event_id
@@ -70,7 +71,7 @@ const BOOKING_SELECT = `
 
 router.get('/mine', requireAuth, asyncHandler(async (req, res) => {
   const rows = await query(`${BOOKING_SELECT} WHERE b.user_id = ? ORDER BY e.event_date DESC, e.start_time DESC`, [req.user.user_id]);
-  res.json({ bookings: rows });
+  res.json({ bookings: rows.map((r) => isoFields(r)) });
 }));
 
 router.get('/:id/card', requireAuth, asyncHandler(async (req, res) => {
@@ -89,7 +90,7 @@ router.get('/', requireAdmin, asyncHandler(async (req, res) => {
     where.push('(u.full_name LIKE ? OR u.student_number LIKE ? OR b.booking_ref LIKE ? OR u.email LIKE ?)'); params.push(p, p, p, p);
   }
   const rows = await query(`${BOOKING_SELECT} ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY b.booked_at DESC LIMIT 1000`, params);
-  res.json({ bookings: rows });
+  res.json({ bookings: rows.map((r) => isoFields(r)) });
 }));
 
 router.delete('/:id', requireAdmin, asyncHandler(async (req, res) => {

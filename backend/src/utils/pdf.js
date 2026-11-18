@@ -1,5 +1,6 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
+import { nowLocalLabel } from './time.js';
 
 const NAVY = '#2d3e5a';
 const ACCENT = '#c8611c';
@@ -73,7 +74,7 @@ export function buildReport(res, { title, filters = [], columns, rows, totals = 
     drawLogo(doc, left, 36, 34);
     doc.fillColor(NAVY).font('Helvetica-Bold').fontSize(18).text('CampusSeat', left + 44, 38);
     doc.font('Helvetica').fontSize(9).fillColor('#6b7686').text('Campus event seat booking system', left + 44, 59);
-    doc.font('Helvetica').fontSize(9).fillColor('#6b7686').text(`Generated: ${new Date().toLocaleString('en-GB')}`, left, 42, { width: usable, align: 'right' });
+    doc.font('Helvetica').fontSize(9).fillColor('#6b7686').text(`Generated: ${nowLocalLabel()}`, left, 42, { width: usable, align: 'right' });
     doc.moveTo(left, 80).lineTo(left + usable, 80).strokeColor('#c9d1de').lineWidth(1).stroke();
   };
   header();
