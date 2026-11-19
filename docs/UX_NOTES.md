@@ -80,6 +80,8 @@ Scrolling table boxes are `position: relative`, so screen-reader-only labels ins
 | Error recovery | Check-in recent list | Every check-in can be undone, and undoing is recorded in the audit log. |
 | Progressive disclosure | Account > Your details | The password box appears only when the student number or school changes; fixing a typo in a name is one step. |
 | Offline first (at the door) | `public/sw.js`, offline banner | Tickets and QR codes are kept on the phone after My bookings is opened once, so a card opens with no signal. Only GET requests are cached; personal copies are cleared on logout. |
+| Fitts's law (the student side) | Registration card | 'Show at the door' is the one main action on the card and full width on phones; it opens a large black-on-white QR (any theme) so the scanner reads it first time. Secondary actions are compact but still 42px tall. |
+| Visibility of system status | Card, admin Bookings | A used card says 'Used at the door' with the time and can no longer be cancelled; admins see an 'At the door' column with All / Checked in / Not yet filters. |
 | Low commitment | Save button on cards and the event page | Saving is optimistic and reversible, and says clearly that it does not hold a seat. |
 
 The camera scanner uses the browser's `BarcodeDetector` where it exists and loads `jsQR` (Apache-2.0, 47 kB gzip) only on devices without it, such as iPhones. Nothing from it runs on pages other than Check-in.

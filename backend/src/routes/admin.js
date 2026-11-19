@@ -11,6 +11,7 @@ import { unlock } from '../lockout.js';
 import { issueReset } from '../passwordReset.js';
 import { listParams } from '../utils/list.js';
 import { buildReport, toCsv } from '../utils/pdf.js';
+import { OPEN_BEFORE_H } from './checkin.js';
 import { isoFields, localDayRangeUtc, localToday, offsetString, sqlToLocal } from '../utils/time.js';
 
 const router = Router();
@@ -226,11 +227,13 @@ router.get('/reports/:type', asyncHandler(async (req, res) => {
         (SELECT COUNT(*) FROM bookings b WHERE b.event_id = e.event_id) AS booked,
         (SELECT COUNT(*) FROM check_ins c JOIN bookings b ON b.booking_id = c.booking_id WHERE b.event_id = e.event_id) AS attended_n,
         (e.ends_at < UTC_TIMESTAMP()) AS ended,
+        (e.starts_at - INTERVAL ${OPEN_BEFORE_H} HOUR <= UTC_TIMESTAMP()) AS opened,
         (SELECT GROUP_CONCAT(s.school_name SEPARATOR ', ') FROM event_schools es JOIN schools s ON s.school_id = es.school_id WHERE es.event_id = e.event_id) AS restriction
       FROM events e ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY ${sortCol} ${dir}`, params);
-    rows = raw.map(({ attended_n, ended, ...r }) => ({ ...r, booked: Number(r.booked), remaining: r.capacity - Number(r.booked),
+    // Attended stays blank until check-in opens: 0 for a future event would read as "nobody came".
+    rows = raw.map(({ attended_n, ended, opened, ...r }) => ({ ...r, booked: Number(r.booked), remaining: r.capacity - Number(r.booked),
       fill: `${Math.round((Number(r.booked) / r.capacity) * 100)}%`, restriction: r.restriction || 'Everyone',
-      attended: Number(attended_n), no_show: Number(ended) ? Number(r.booked) - Number(attended_n) : '' }));
+      attended: Number(opened) ? Number(attended_n) : '', no_show: Number(ended) ? Number(r.booked) - Number(attended_n) : '' }));
     const seats = rows.reduce((a, r) => a + r.capacity, 0); const booked = rows.reduce((a, r) => a + r.booked, 0);
     const endedRows = rows.filter((r) => r.no_show !== '');
     const endedBooked = endedRows.reduce((a, r) => a + r.booked, 0); const endedAttended = endedRows.reduce((a, r) => a + r.attended, 0);

@@ -114,7 +114,7 @@ export default function AdminEvents() {
                 const [label, tone] = status(e);
                 return (
                   <tr key={e.event_id} className={e.is_past ? 'row-dim' : ''}>
-                    <td><strong>{e.title}</strong><br /><span className="muted small">{categoryOf(e.category).label} · {e.venue}</span></td>
+                    <td><strong>{e.title}</strong><br /><span className="muted small">{categoryOf(e.category).one} · {e.venue}</span></td>
                     <td className="nowrap">{fmtDate(e.event_date, { day: 'numeric', month: 'short', year: 'numeric' })}<br /><span className="muted small">{fmtTime(e.start_time)} to {fmtTime(e.end_time)}</span></td>
                     <td><span className={`badge ${tone}`}>{label}</span>{e.waitlist_count > 0 && <><br /><span className="small muted">{e.waitlist_count} waiting</span></>}</td>
                     <td className="seats-cell">
@@ -144,7 +144,7 @@ export default function AdminEvents() {
             <Field label="Title" error={errors.title}>{(p) => <input {...p} value={editing.title} onChange={set('title')} />}</Field>
             <Field label="Category" error={errors.category} hint="Sets the colour and cover art, and lets people filter by type.">{(p) => (
               <select {...p} value={editing.category} onChange={set('category')}>
-                {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+                {CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.one}</option>)}
               </select>)}</Field>
             <Field label="Description" error={errors.description}>{(p) => <textarea {...p} value={editing.description} onChange={set('description')} />}</Field>
             <div className="grid-2">

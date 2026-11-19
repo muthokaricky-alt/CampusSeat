@@ -17,7 +17,7 @@ export default function Help() {
       <details><summary>I forgot my password</summary>
         <p>Select Forgot your password on the log in page and enter your email. We send you a link to choose a new password; it works once and expires after 30 minutes. Choosing a new password logs you out on every device. No email after a few minutes? Check your spam folder, or ask an administrator to send you a new link.</p></details>
       <details><summary>What do I bring to the event?</summary>
-        <p>Bring your registration card, printed or on your phone. Staff scan its QR code at the door (or type the booking reference). Each card works once.</p></details>
+        <p>Bring your registration card, printed or on your phone. On your phone, open My bookings and choose Show at the door for a large QR code (turn your screen brightness up). Staff scan it or type the booking reference. Each card works once; afterwards it says Used at the door.</p></details>
       <details><summary>Will my ticket work without internet?</summary>
         <p>Yes, once you have opened My bookings on your phone while online. Your cards and QR codes stay on the phone, so they open at the door even with no signal. You can also add CampusSeat to your home screen from the browser menu. Logging out removes the saved copies.</p></details>
       <details><summary>How do I change my name, student number or school?</summary>

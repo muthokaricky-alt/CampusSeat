@@ -232,7 +232,7 @@ td.actions .btn + .btn { margin-left: 0.35rem; }
 .reg-card .ref { font-family: var(--font-head); font-size: 1.6rem; letter-spacing: 0.04em; color: var(--primary); }
 .reg-card footer { padding: 0 1.4rem 1.2rem; }
 .reg-card.highlight { outline: 3px solid var(--ok); outline-offset: 3px; }
-@media (max-width: 520px) { .reg-card .content { grid-template-columns: 1fr; } }
+@media (max-width: 340px) { .reg-card .content { grid-template-columns: 1fr; } }
 
 /* ---------- Admin layout ---------- */
 .admin { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 1.75rem; padding: 1.75rem 0 4rem; }
@@ -688,3 +688,25 @@ tr.row-dim td { color: var(--ink-2); }
 .activity li.undone strong { text-decoration: line-through; }
 .checkin-form .btn { white-space: nowrap; flex: none; }
 .offline-banner { display: flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.5rem 1rem; background: var(--warn-soft); color: var(--warn); font-weight: 600; font-size: 0.9rem; }
+/* Door pass: the biggest, cleanest QR we can show. Always black on white, whatever the theme. */
+.door-pass { text-align: center; }
+.door-pass img { display: block; width: min(78vw, 320px); height: auto; aspect-ratio: 1; margin: 0 auto 0.9rem; background: #fff; padding: 14px; border-radius: 12px; border: 1px solid var(--line); }
+.door-pass .ref { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: clamp(1.4rem, 6vw, 1.9rem); font-weight: 700; letter-spacing: 0.04em; margin-bottom: 0.4rem; }
+.door-pass p { margin: 0.25rem 0; }
+/* Card actions: one main action, compact secondaries, still 42px tall for thumbs. */
+.reg-actions { align-items: center; }
+.reg-actions .btn.sm { min-height: 42px; }
+.btn.icon-only { width: 42px; padding: 0; justify-content: center; }
+.reg-actions .push-end { margin-left: auto; }
+/* Phones: the card is what people show at the door, so keep it short and put the door pass first. */
+@media (max-width: 520px) {
+  .reg-card .content { gap: 0.7rem 1rem; padding: 1rem 1.1rem; }
+  .reg-qr { padding: 0 1.1rem; }
+  .reg-ref { padding: 0.9rem 1.1rem; }
+  .reg-card footer { padding: 0 1.1rem 1.1rem; }
+  .reg-actions > .btn:first-child { flex: 1 1 100%; }
+}
+/* Admin tables: row actions stay visible even when long emails make the table scroll sideways. */
+.table-wrap td.actions { position: sticky; right: 0; background: var(--surface); box-shadow: -8px 0 8px -8px rgb(0 0 0 / 0.12); }
+.table-wrap tbody tr:hover td.actions { background: linear-gradient(color-mix(in srgb, var(--primary-soft) 35%, transparent), color-mix(in srgb, var(--primary-soft) 35%, transparent)) var(--surface); }
+.wrap-any { overflow-wrap: anywhere; }

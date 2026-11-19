@@ -4,6 +4,15 @@ import { api } from '../../lib/api.js';
 import { useToast } from '../../context/ToastContext.jsx';
 import { Alert } from '../../components/ui.jsx';
 import { TableSkeleton } from '../../components/admin/DataTable.jsx';
+import { fmtDate, fmtDateTime } from '../../lib/format.js';
+
+// The JSON API returns UTC ISO times (for programs); the preview shows them the way the PDF and CSV do.
+const cell = (key, v) => {
+  if (v == null || v === '') return '';
+  if (/_at$/.test(key)) return fmtDateTime(v);
+  if (key === 'event_date') return fmtDate(v, { day: 'numeric', month: 'short', year: 'numeric' });
+  return String(v);
+};
 
 export default function Reports() {
   const toast = useToast();
@@ -67,7 +76,7 @@ export default function Reports() {
         {!data && !error && <TableSkeleton cols={4} rows={6} />}
         {data && <tbody>
           {data.rows.length === 0 && <tr><td colSpan={data.columns.length} className="table-empty"><strong>No results for these filters</strong><br /><span className="muted">Widen the dates or choose all events.</span></td></tr>}
-          {data.rows.slice(0, 200).map((r, i) => <tr key={i}>{data.columns.map((c) => <td key={c.key}>{String(r[c.key] ?? '')}</td>)}</tr>)}
+          {data.rows.slice(0, 200).map((r, i) => <tr key={i}>{data.columns.map((c) => <td key={c.key} className={/ref|number/.test(c.key) ? 'nowrap' : undefined}>{cell(c.key, r[c.key])}</td>)}</tr>)}
         </tbody>}
       </table></div>
       {data?.rows.length > 200 && <p className="muted small" style={{ marginTop: '0.6rem' }}>The preview shows the first 200 rows. Downloads include all {data.rows.length}.</p>}

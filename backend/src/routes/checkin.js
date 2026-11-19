@@ -14,7 +14,7 @@ const router = Router();
 router.use(requireAdmin);
 
 // Check-in is open from 3 hours before the start until 3 hours after the end.
-const OPEN_BEFORE_H = 3;
+export const OPEN_BEFORE_H = 3;
 const OPEN_AFTER_H = 3;
 
 /** Accepts what people actually type or scanners send: case, spaces and missing dashes do not matter. */

@@ -688,8 +688,11 @@ ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted ev
 {
   const nbo = (d) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Nairobi', hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
     .formatToParts(d).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]));
-  const a0 = nbo(new Date(Date.now() + 60 * 60e3)); const b0 = nbo(new Date(Date.now() + 120 * 60e3));
-  if (`${a0.year}-${a0.month}-${a0.day}` === `${b0.year}-${b0.month}-${b0.day}`) {
+  // Starts in 30 minutes (inside the check-in window); ends 2 hours from now, or at 23:59 if that would cross midnight.
+  const a0 = nbo(new Date(Date.now() + 30 * 60e3)); let b0 = nbo(new Date(Date.now() + 120 * 60e3));
+  const sameDay = (x, y) => `${x.year}-${x.month}-${x.day}` === `${y.year}-${y.month}-${y.day}`;
+  if (!sameDay(a0, b0)) b0 = { ...a0, hour: '23', minute: '59' };
+  if (sameDay(a0, nbo(new Date())) && `${b0.hour}:${b0.minute}` > `${a0.hour}:${a0.minute}`) {
     const D = (await call('POST', '/api/events', mk({ title: `Door ${stamp}`, event_date: `${a0.year}-${a0.month}-${a0.day}`, start_time: `${a0.hour}:${a0.minute}`, end_time: `${b0.hour}:${b0.minute}` }), admin.token)).data.event;
     const far = (await call('POST', '/api/events', mk({ title: `Far ${stamp}` }), admin.token)).data.event;
     const g = await Promise.all(['c1', 'c2', 'c3'].map((i) => mkUser(i, comp)));
@@ -724,6 +727,8 @@ ok((await call('GET', `/api/events/${ev.event_id}`)).status === 404, 'deleted ev
     ok(rep.columns.some((c) => c.key === 'attended') && rep.rows.filter((r) => r.attended === 'Yes').length === 1, 'the bookings report has an Attended column');
     const evRep = (await call('GET', '/api/admin/reports/events?format=json', null, admin.token)).data;
     ok(evRep.columns.some((c) => c.key === 'no_show') && evRep.rows.find((r) => r.title === `Door ${stamp}`)?.attended === 1, 'the events report shows attended and no-shows');
+    const future = evRep.rows.filter((r) => r.attended === '');
+    ok(future.length > 0 && future.every((r) => r.no_show === ''), 'events whose check-in has not opened show a blank attended count, not 0');
     const st = (await call('GET', '/api/admin/stats', null, admin.token)).data.totals;
     ok(Number.isFinite(st.recent_booked) && Number.isFinite(st.recent_attended), 'the dashboard has attendance for recent events');
     for (const e of [D, far]) await call('DELETE', `/api/events/${e.event_id}`, null, admin.token);

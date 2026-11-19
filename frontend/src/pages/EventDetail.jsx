@@ -217,7 +217,7 @@ export default function EventDetail() {
       <header className="event-hero">
         <CoverArt category={event.category} seed={event.event_id} />
         <div className="event-hero-inner">
-          <span className="t2-cat static">{(() => { const c = categoryOf(event.category); return <><c.icon size={13} aria-hidden />{c.label}</>; })()}</span>
+          <span className="t2-cat static">{(() => { const c = categoryOf(event.category); return <><c.icon size={13} aria-hidden />{c.one}</>; })()}</span>
           <h1>{event.title}</h1>
           <p className="event-hero-when">{fmtDate(event.event_date, { weekday: 'long', day: 'numeric', month: 'long' })} · {fmtTime(event.start_time)} to {fmtTime(event.end_time)} · {event.venue}</p>
         </div>

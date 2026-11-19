@@ -155,7 +155,7 @@ export default function CheckIn() {
             <label htmlFor="ci-ref" className="label">Booking reference</label>
             <div className="row">
               <input id="ci-ref" ref={input} autoFocus autoComplete="off" autoCapitalize="characters" spellCheck="false" inputMode="text"
-                placeholder="CS-2026-00081" value={ref} onChange={(e) => setRef(e.target.value)} className="checkin-input" />
+                placeholder="e.g. CS-2026-00081" value={ref} onChange={(e) => setRef(e.target.value)} className="checkin-input" />
               <button className="btn lg" disabled={busy || !ref.trim()}><ScanLine size={18} aria-hidden />Check in</button>
             </div>
             <p className="small muted">A barcode scanner works here too: it types the reference and presses Enter.</p>

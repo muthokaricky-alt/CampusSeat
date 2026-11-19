@@ -85,7 +85,7 @@ Deployment: use one Node host (for example Render or Railway) plus a managed MyS
 
 Since this report was first written, CampusSeat moved to cookie sessions with CSRF protection, emailed reset links, account lockout, optional two-factor login for admins, a waitlist, a full audit trail, numbered database migrations and UTC time storage. The latest work adds door check-in with attendance, event types with cover art, saved events, self-service profile editing and offline tickets (FR6 to FR10 in the Requirements).
 
-**Automated tests:** `npm test` now runs 258 checks against the API and a MySQL 8 database, with 258 passed and 0 failed. New areas include:
+**Automated tests:** `npm test` runs against the API and a MySQL 8 database. The last full run (18 Nov 2026, about 22:10 Nairobi time) passed 257 checks with 0 failures; the cancellation-cutoff section skipped itself, as it does late in the evening because its test event would cross midnight (earlier the same day, with that section included, 258 passed). New areas include:
 - check-in: correct ref, loose spelling, wrong event, outside the window, a used card, two simultaneous scans of one card (exactly one succeeds), undo, the attended filters, and attendance in reports and on the dashboard;
 - event types: filters, validation, and the category kept on edit;
 - saved events: save, unsave, the saved filter, and anonymous users refused;
@@ -106,4 +106,15 @@ Since this report was first written, CampusSeat moved to cookie sessions with CS
 Wrong-event, outside-the-window and undo results at the door are covered by the automated tests above.
 
 **Resolved limitations from section 5:** forgot password now sends a single-use emailed link; two-factor login is available for admins.
+
+**Further browser checks, 18 to 19 Nov 2026** (local production build, Chrome, demo database):
+
+| ID | Scenario | Expected result | Result |
+| --- | --- | --- | --- |
+| T24 | Show at the door | Large black-on-white QR and reference in a dialog; Done closes it | Pass |
+| T25 | Card on a 390 px phone | Fields in two columns, door pass button full width, no sideways scrolling | Pass |
+| T26 | Admin bookings for one event | At the door column with check-in times; Checked in / Not yet filters; actions visible without scrolling | Pass |
+| T27 | Report preview times | Booked at (EAT) shows Nairobi time, not a raw UTC timestamp | Pass (fixed) |
+| T28 | PDF card with a long school name | School wraps onto two lines without overlapping the date | Pass (fixed) |
+| T29 | Events report before an event | Attended is blank until check-in opens, not 0 | Pass (fixed) |
 
